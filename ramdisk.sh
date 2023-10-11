@@ -36,6 +36,20 @@ unmount_ramdisk() {
   fi
 }
 
+# Function to display the help message
+show_help() {
+  echo "Usage: $0 <ramdisk_size_in_GB> <mount_point> [unmount]"
+  echo "  - ramdisk_size_in_GB: Size of the RAM disk in gigabytes."
+  echo "  - mount_point: The directory where the RAM disk will be mounted."
+  echo "  - unmount (optional): Use 'unmount' as the third argument to unmount the RAM disk."
+  exit 1
+}
+
+# Check if the script is run with the correct number of arguments
+if [ "$#" -lt 2 ]; then
+  show_help
+fi
+
 # Check if the script is run with the correct number of arguments
 if [ "$#" -lt 2 ]; then
   echo "Usage: $0 <ramdisk_size_in_GB> <mount_point> [unmount]"
