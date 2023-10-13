@@ -1,4 +1,5 @@
 ramdisk/
 init.sh
 /.vscode
-
+repo.json
+*.log

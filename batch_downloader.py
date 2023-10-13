@@ -1,9 +1,88 @@
+import os
 from huggingface_hub import HfFileSystem, hf_hub_url
 from typing import Optional, List, Pattern, Tuple
 import re
 import random
 from huggingface_hub import hf_hub_download
 import threading
+import json
+import subprocess
+
+def list_files_in_zip(zip_file_path):
+    """
+    List the names of all files in a zip archive.
+
+    :param zip_file_path: Path to the zip file.
+    :return: A list of file names in the zip archive.
+    """
+    with zipfile.ZipFile(zip_file_path, "r") as archive:
+        file_list = archive.namelist()
+    return file_list
+
+
+def download_with_aria2(download_directory, urls_file, auth_token):
+    # Build the command as a list of arguments
+    command = [
+        "aria2c",
+        "--input-file",
+        urls_file,
+        "--dir",
+        download_directory,
+        "--max-concurrent-downloads",
+        "48",
+        "--max-connection-per-server",
+        "16",
+        "--log",
+        "aria2.log",
+        "--log-level=error",
+        "--auto-file-renaming=false",
+        "--max-tries=3",
+        "--retry-wait=5",
+        "--user-agent=aria2c/pow",
+        "--header",
+        f"Authorization: Bearer {auth_token}",  # Replace 'Bearer' with your token type if needed
+    ]
+
+    try:
+        # Execute the aria2c command
+        subprocess.run(command, check=True)
+        print("Download completed successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"Download failed with error: {e.returncode}")
+
+
+def write_urls_to_file(url_list, output_file):
+    try:
+        with open(output_file, "w") as file:
+            for url in url_list:
+                file.write(url + "\n")
+        print(f"URLs have been written to {output_file}")
+    except Exception as e:
+        print(f"Error writing URLs to file: {str(e)}")
+
+
+def read_json_file(file_path):
+    try:
+        with open(file_path, "r") as file:
+            json_data = file.read()
+            data = json.loads(json_data)
+            return data
+    except FileNotFoundError:
+        print(f"File not found: {file_path}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"JSON decoding error: {e}")
+        return None
+
+
+def create_abs_path(file_name):
+    # Get the directory of the currently running script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Construct the absolute path to the file
+    file_path = os.path.join(script_dir, file_name)
+
+    return file_path
 
 
 def download_files_concurently(
@@ -221,3 +300,45 @@ def flatten_list(nested_list) -> list:
             flat_list.append(item)
     return flat_list
 
+
+def main():
+    creds_data = "repo.json"
+    ramdisk_path = "ramdisk"
+    temp_file_urls = "download.txt"
+
+    # convert to absolute path
+    ramdisk_path = create_abs_path(ramdisk_path)
+
+    # grab token and repo id from json file
+    repo_id = read_json_file(create_abs_path(creds_data))
+
+    data = get_sample_from_repo(
+        repo_name=repo_id["repo_name"],
+        token=repo_id["token"],
+        repo_path="chunks",
+        seed=432,
+        batch_size=2,
+        offset=3,
+    )
+
+    # grab the urls and extract file name from urls
+    file_urls = flatten_list(data[0])
+    aria_format = [f"{file_name}\n\tout={file_name.split('/')[-1]}\n" for file_name in file_urls]
+
+    # put the urls into a temporary txt file so aria can download it
+    write_urls_to_file(aria_format, os.path.join(ramdisk_path, temp_file_urls))
+
+    # use aria to download everything
+    download_with_aria2(
+        download_directory=os.path.join(ramdisk_path, f"batch_{1}"),
+        urls_file=os.path.join(ramdisk_path, temp_file_urls),
+        auth_token=repo_id["token"],
+    )
+
+
+    zip_file_path = "ramdisk/batch_1/16384-e6-ab6d18bd-4897-499f-92f5-a69ca34d19cd.zip"
+
+    print()
+
+
+main()
