@@ -7,6 +7,29 @@ from huggingface_hub import hf_hub_download
 import threading
 import json
 import subprocess
+import zipfile
+import pandas as pd
+from PIL import Image
+
+
+def concatenate_csv_files(file_paths:List[str]) -> pd.DataFrame:
+    try:
+        # Initialize an empty DataFrame to store the concatenated data
+        concatenated_data = pd.DataFrame()
+
+        # Loop through the list of file paths and concatenate the CSV files
+        for file_path in file_paths:
+            # Read each CSV file into a DataFrame
+            data = pd.read_csv(file_path)
+            
+            # Concatenate the data to the existing DataFrame
+            concatenated_data = pd.concat([concatenated_data, data], ignore_index=True)
+
+        return concatenated_data
+
+    except Exception as e:
+        # Handle any potential errors
+        print(f"An error occurred: {e}")
 
 
 def list_files_in_zip(zip_file_path):
@@ -301,6 +324,15 @@ def flatten_list(nested_list) -> list:
             flat_list.append(item)
     return flat_list
 
+def list_files_in_directory(directory_path):
+    try:
+        # Get a list of files in the specified directory
+        file_list = os.listdir(directory_path)
+        return file_list
+    except OSError as e:
+        # Handle any potential errors, such as the directory not existing
+        print(f"An error occurred: {e}")
+        return []
 
 def check_error(filename: str) -> list:
     list_broken_image = []
@@ -327,16 +359,34 @@ def process_image_in_zip(zip_file_path, png_file_name, process_func):
             result = process_func(file_in_zip)
     return result
 
+
 def download_chunks_of_dataset(
-    repo_name: str, 
+    repo_name: str,
     batch_size: int,
     offset: int,
     storage_path: str,
-    token: Optional[str] = None, 
+    batch_number: str,
+    batch_name: Optional[str] = "batch_",
+    token: Optional[str] = None,
     repo_path: Optional[str] = None,
     seed: Optional[int] = 42,
-    _temp_file_name: Optional[str] = "aria_download_url_temp.txt"
+    _temp_file_name: Optional[str] = "aria_download_url_temp.txt",
 ) -> None:
+    """
+    Download data chunks from a specified repository using the Aria2 download manager.
+
+    Args:
+        repo_name (str): The name of the repository to download data from.
+        batch_size (int): The number of items to download in each batch.
+        offset (int): The starting index of the dataset to download.
+        storage_path (str): The directory where downloaded data will be stored.
+        batch_number (str): A unique identifier for the current download batch.
+        batch_name (Optional[str]): Prefix for batch directory names (default: "batch_").
+        token (Optional[str]): Authentication token if required (default: None).
+        repo_path (Optional[str]): The path to the specific dataset within the repository (default: None).
+        seed (Optional[int]): Random seed for data sampling (default: 42).
+        _temp_file_name (Optional[str]): Temporary file name for storing download URLs (default: "aria_download_url_temp.txt").
+    """
     # convert to absolute path
     ramdisk_path = create_abs_path(storage_path)
 
@@ -360,32 +410,57 @@ def download_chunks_of_dataset(
 
     # use aria to download everything
     download_with_aria2(
-        download_directory=os.path.join(ramdisk_path, f"batch_{1}"),
+        download_directory=os.path.join(ramdisk_path, f"{batch_name}{batch_number}"),
         urls_file=os.path.join(ramdisk_path, _temp_file_name),
         auth_token=token,
     )
 
-def main():
 
+def main():
     creds_data = "repo.json"
     ramdisk_path = "ramdisk"
     temp_file_urls = "download.txt"
-    seed=432
+    batch_name = "batch_"
+    batch_number = 1
+    seed = 432
+    prefix = "16384-e6-"
 
     # grab token and repo id from json file
     repo_id = read_json_file(create_abs_path(creds_data))
 
+    # download batch
     download_chunks_of_dataset(
-        repo_name=repo_id["repo_name"], 
+        repo_name=repo_id["repo_name"],
         batch_size=2,
         offset=3,
-        token=repo_id["token"], 
+        token=repo_id["token"],
         repo_path="chunks",
         storage_path=ramdisk_path,
         seed=seed,
+        batch_number=batch_number,
+        batch_name=batch_name
     )
 
+    # accessing images and csv data
 
+    # get list of files in the batch folder
+    batch_path = os.path.join(create_abs_path(ramdisk_path),f"{batch_name}{batch_number}")
+    file_list = list_files_in_directory(batch_path)
+    # get the csvs and convert it to abs path
+    csvs = regex_search_list(file_list, r".csv")
+    csvs = [os.path.join(batch_path, csv) for csv in csvs]
+    # get the zip and convert it to abs path
+    zips = regex_search_list(file_list, r".zip")
+    zips = [os.path.join(batch_path, zip) for zip in zips]
+
+    # combine csvs into 1 dataframe
+    df_caption = concatenate_csv_files(csvs)
+    # create zip file path for each image to indicate where the image resides inside the zip
+    df_caption["zip_file_path"] = (batch_path+"/"+prefix+df_caption.chunk_id+".zip")
+    # TODO: i think unzipping the files inside a folder is the best choice ? so we dont have to modify the dataloader
+    # alternatively modify the dataloader and not unzip the files
+
+    list_files_in_zip("ramdisk/batch_1/16384-e6-6c384a84-b69d-4ed7-bde1-cddcea3009d0.zip")
     print()
 
 
