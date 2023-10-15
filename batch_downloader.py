@@ -8,6 +8,7 @@ import threading
 import json
 import subprocess
 
+
 def list_files_in_zip(zip_file_path):
     """
     List the names of all files in a zip archive.
@@ -301,42 +302,89 @@ def flatten_list(nested_list) -> list:
     return flat_list
 
 
-def main():
-    creds_data = "repo.json"
-    ramdisk_path = "ramdisk"
-    temp_file_urls = "download.txt"
+def check_error(filename: str) -> list:
+    list_broken_image = []
+    try:
+        with Image.open(filename) as im:
+            im = im.transpose(Image.FLIP_LEFT_RIGHT)
+    except Exception as e:
+        print(f"image error {filename}: {e}")
+        list_broken_image.append(filename)
+    return list_broken_image
 
+
+def process_image_in_zip(zip_file_path, png_file_name, process_func):
+    """
+    Open an image from a zip file, apply a processing function, and return the result.
+
+    :param zip_file_path: Path to the zip file.
+    :param png_file_name: Name of the PNG file inside the zip.
+    :param process_func: Function to process the opened image.
+    :return: The result of processing the image.
+    """
+    with zipfile.ZipFile(zip_file_path, "r") as archive:
+        with archive.open(png_file_name) as file_in_zip:
+            result = process_func(file_in_zip)
+    return result
+
+def download_chunks_of_dataset(
+    repo_name: str, 
+    batch_size: int,
+    offset: int,
+    storage_path: str,
+    token: Optional[str] = None, 
+    repo_path: Optional[str] = None,
+    seed: Optional[int] = 42,
+    _temp_file_name: Optional[str] = "aria_download_url_temp.txt"
+) -> None:
     # convert to absolute path
-    ramdisk_path = create_abs_path(ramdisk_path)
-
-    # grab token and repo id from json file
-    repo_id = read_json_file(create_abs_path(creds_data))
+    ramdisk_path = create_abs_path(storage_path)
 
     data = get_sample_from_repo(
-        repo_name=repo_id["repo_name"],
-        token=repo_id["token"],
-        repo_path="chunks",
-        seed=432,
-        batch_size=2,
-        offset=3,
+        repo_name=repo_name,
+        token=token,
+        repo_path=repo_path,
+        seed=seed,
+        batch_size=batch_size,
+        offset=offset,
     )
 
     # grab the urls and extract file name from urls
     file_urls = flatten_list(data[0])
-    aria_format = [f"{file_name}\n\tout={file_name.split('/')[-1]}\n" for file_name in file_urls]
-
+    # create a list of url strings and args that supported by aria2
+    aria_format = [
+        f"{file_name}\n\tout={file_name.split('/')[-1]}\n" for file_name in file_urls
+    ]
     # put the urls into a temporary txt file so aria can download it
-    write_urls_to_file(aria_format, os.path.join(ramdisk_path, temp_file_urls))
+    write_urls_to_file(aria_format, os.path.join(ramdisk_path, _temp_file_name))
 
     # use aria to download everything
     download_with_aria2(
         download_directory=os.path.join(ramdisk_path, f"batch_{1}"),
-        urls_file=os.path.join(ramdisk_path, temp_file_urls),
-        auth_token=repo_id["token"],
+        urls_file=os.path.join(ramdisk_path, _temp_file_name),
+        auth_token=token,
     )
 
+def main():
 
-    zip_file_path = "ramdisk/batch_1/16384-e6-ab6d18bd-4897-499f-92f5-a69ca34d19cd.zip"
+    creds_data = "repo.json"
+    ramdisk_path = "ramdisk"
+    temp_file_urls = "download.txt"
+    seed=432
+
+    # grab token and repo id from json file
+    repo_id = read_json_file(create_abs_path(creds_data))
+
+    download_chunks_of_dataset(
+        repo_name=repo_id["repo_name"], 
+        batch_size=2,
+        offset=3,
+        token=repo_id["token"], 
+        repo_path="chunks",
+        storage_path=ramdisk_path,
+        seed=seed,
+    )
+
 
     print()
 
