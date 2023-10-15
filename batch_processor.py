@@ -9,7 +9,7 @@ from transformers import CLIPTokenizer
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-how 
+ 
 def process_image(
     rescale_size: Union[list, tuple],
     image: Image = None,
