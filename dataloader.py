@@ -1,6 +1,7 @@
 # python
 import os
 from threading import Thread
+import pandas as pd
 
 from batch_downloader import (
     read_json_file,
@@ -12,10 +13,7 @@ from batch_downloader import (
     delete_file_or_folder,
 )
 
-from dataframe_processor import (
-    discrete_scale_to_equal_area,
-    resolution_bucketing_batch_with_chunking,
-)
+from dataframe_processor import create_tag_based_training_dataframe
 
 from batch_processor import (
     generate_batch,
@@ -41,10 +39,12 @@ def main():
     ramdisk_path = "ramdisk"
     temp_file_urls = "download.txt"
     batch_name = "batch_"
-    batch_number = 1  # <<< this should be incremented for each sucessfull dataloading
+    batch_number = 0  # <<< this should be incremented for each sucessfull dataloading
     batch_size = 2
     seed = 432  # <<< this should be incremented when all batch is processed
     prefix = "16384-e6-"
+    MAXIMUM_RESOLUTION_AREA = [576**2, 704**2, 832**2, 960**2, 1088**2]
+    BUCKET_LOWER_BOUND_RESOLUTION = [384, 512, 576, 704, 832]
 
     # grab token and repo id from json file
     repo_id = read_json_file(create_abs_path(creds_data))
@@ -117,6 +117,20 @@ def main():
     )
     # TODO: i think unzipping the files inside a folder is the best choice ? so we dont have to modify the dataloader
     # alternatively modify the dataloader and not unzip the
+
+    # create multiresolution caption
+    training_df = create_tag_based_training_dataframe(
+        dataframe=df_caption,
+        image_width_col_name="image_width",
+        image_height_col_name="image_height",
+        caption_col="caption",  # caption column name
+        bucket_batch_size=8,
+        repeat_batch=10,
+        seed=seed,
+        max_res_areas=MAXIMUM_RESOLUTION_AREA,  # modify this if you want long or wide image
+        bucket_lower_bound_resolutions=BUCKET_LOWER_BOUND_RESOLUTION,  # modify this if you want long or wide image
+        extreme_aspect_ratio_clip=2.0,  # modify this if you want long or wide image
+    )
 
     # rebundle all thread
     prefetcher_thread.join()
