@@ -3,3 +3,4 @@ init.sh
 /.vscode
 repo.json
 *.log
+__pycache__/

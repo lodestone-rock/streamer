@@ -415,53 +415,65 @@ def download_chunks_of_dataset(
         auth_token=token,
     )
 
+def delete_file_or_folder(path):
+    if os.path.exists(path):
+        if os.path.isfile(path):
+            os.remove(path)
+            print(f"{path} (file) deleted successfully")
+        elif os.path.isdir(path):
+            os.rmdir(path)
+            print(f"{path} (folder) deleted successfully")
+        else:
+            print(f"{path} is neither a file nor a folder")
+    else:
+        print(f"{path} does not exist")
+        
+# def main():
+#     creds_data = "repo.json"
+#     ramdisk_path = "ramdisk"
+#     temp_file_urls = "download.txt"
+#     batch_name = "batch_"
+#     batch_number = 1
+#     seed = 432
+#     prefix = "16384-e6-"
 
-def main():
-    creds_data = "repo.json"
-    ramdisk_path = "ramdisk"
-    temp_file_urls = "download.txt"
-    batch_name = "batch_"
-    batch_number = 1
-    seed = 432
-    prefix = "16384-e6-"
+#     # grab token and repo id from json file
+#     repo_id = read_json_file(create_abs_path(creds_data))
 
-    # grab token and repo id from json file
-    repo_id = read_json_file(create_abs_path(creds_data))
+#     # download batch
+#     download_chunks_of_dataset(
+#         repo_name=repo_id["repo_name"],
+#         batch_size=2,
+#         offset=3,
+#         token=repo_id["token"],
+#         repo_path="chunks",
+#         storage_path=ramdisk_path,
+#         seed=seed,
+#         batch_number=batch_number,
+#         batch_name=batch_name
+#     )
 
-    # download batch
-    download_chunks_of_dataset(
-        repo_name=repo_id["repo_name"],
-        batch_size=2,
-        offset=3,
-        token=repo_id["token"],
-        repo_path="chunks",
-        storage_path=ramdisk_path,
-        seed=seed,
-        batch_number=batch_number,
-        batch_name=batch_name
-    )
+#     # accessing images and csv data
 
-    # accessing images and csv data
+#     # get list of files in the batch folder
+#     batch_path = os.path.join(create_abs_path(ramdisk_path),f"{batch_name}{batch_number}")
+#     file_list = list_files_in_directory(batch_path)
+#     # get the csvs and convert it to abs path
+#     csvs = regex_search_list(file_list, r".csv")
+#     csvs = [os.path.join(batch_path, csv) for csv in csvs]
+#     # get the zip and convert it to abs path
+#     zips = regex_search_list(file_list, r".zip")
+#     zips = [os.path.join(batch_path, zip) for zip in zips]
 
-    # get list of files in the batch folder
-    batch_path = os.path.join(create_abs_path(ramdisk_path),f"{batch_name}{batch_number}")
-    file_list = list_files_in_directory(batch_path)
-    # get the csvs and convert it to abs path
-    csvs = regex_search_list(file_list, r".csv")
-    csvs = [os.path.join(batch_path, csv) for csv in csvs]
-    # get the zip and convert it to abs path
-    zips = regex_search_list(file_list, r".zip")
-    zips = [os.path.join(batch_path, zip) for zip in zips]
+#     # combine csvs into 1 dataframe
+#     df_caption = concatenate_csv_files(csvs)
+#     # create zip file path for each image to indicate where the image resides inside the zip
+#     df_caption["zip_file_path"] = (batch_path+"/"+prefix+df_caption.chunk_id+".zip")
+#     # TODO: i think unzipping the files inside a folder is the best choice ? so we dont have to modify the dataloader
+#     # alternatively modify the dataloader and not unzip the files
 
-    # combine csvs into 1 dataframe
-    df_caption = concatenate_csv_files(csvs)
-    # create zip file path for each image to indicate where the image resides inside the zip
-    df_caption["zip_file_path"] = (batch_path+"/"+prefix+df_caption.chunk_id+".zip")
-    # TODO: i think unzipping the files inside a folder is the best choice ? so we dont have to modify the dataloader
-    # alternatively modify the dataloader and not unzip the files
-
-    list_files_in_zip("ramdisk/batch_1/16384-e6-6c384a84-b69d-4ed7-bde1-cddcea3009d0.zip")
-    print()
+#     list_files_in_zip("ramdisk/batch_1/16384-e6-6c384a84-b69d-4ed7-bde1-cddcea3009d0.zip")
+#     print()
 
 
-main()
+# main()
