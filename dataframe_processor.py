@@ -236,8 +236,9 @@ def resolution_bucketing_batch_with_chunking(
 
     return new_dataframe
 
+
 def shuffle(tags, seed):
     tags = tags.split(",")
-    random.Random(len(tags)*seed).shuffle(tags)
+    random.Random(len(tags) * seed).shuffle(tags)
     tags = ",".join(tags)
     return tags

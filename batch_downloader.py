@@ -12,7 +12,7 @@ import pandas as pd
 from PIL import Image
 
 
-def concatenate_csv_files(file_paths:List[str]) -> pd.DataFrame:
+def concatenate_csv_files(file_paths: List[str]) -> pd.DataFrame:
     try:
         # Initialize an empty DataFrame to store the concatenated data
         concatenated_data = pd.DataFrame()
@@ -21,7 +21,7 @@ def concatenate_csv_files(file_paths:List[str]) -> pd.DataFrame:
         for file_path in file_paths:
             # Read each CSV file into a DataFrame
             data = pd.read_csv(file_path)
-            
+
             # Concatenate the data to the existing DataFrame
             concatenated_data = pd.concat([concatenated_data, data], ignore_index=True)
 
@@ -324,6 +324,7 @@ def flatten_list(nested_list) -> list:
             flat_list.append(item)
     return flat_list
 
+
 def list_files_in_directory(directory_path):
     try:
         # Get a list of files in the specified directory
@@ -333,6 +334,7 @@ def list_files_in_directory(directory_path):
         # Handle any potential errors, such as the directory not existing
         print(f"An error occurred: {e}")
         return []
+
 
 def check_error(filename: str) -> list:
     list_broken_image = []
@@ -415,6 +417,7 @@ def download_chunks_of_dataset(
         auth_token=token,
     )
 
+
 def delete_file_or_folder(path):
     if os.path.exists(path):
         if os.path.isfile(path):
@@ -427,7 +430,8 @@ def delete_file_or_folder(path):
             print(f"{path} is neither a file nor a folder")
     else:
         print(f"{path} does not exist")
-        
+
+
 # def main():
 #     creds_data = "repo.json"
 #     ramdisk_path = "ramdisk"

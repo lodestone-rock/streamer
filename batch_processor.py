@@ -9,7 +9,7 @@ from transformers import CLIPTokenizer
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
- 
+
 def process_image(
     rescale_size: Union[list, tuple],
     image: Image = None,
@@ -266,4 +266,3 @@ def generate_batch(
     output["attention_mask"] = tokenizer_dict.attention_mask
 
     return output
-
