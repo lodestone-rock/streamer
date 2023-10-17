@@ -1,6 +1,6 @@
 import os
 from huggingface_hub import HfFileSystem, hf_hub_url
-from typing import Optional, List, Pattern, Tuple
+from typing import Optional, List, Pattern, Tuple, Iterator
 import re
 import random
 from huggingface_hub import hf_hub_download
@@ -10,6 +10,9 @@ import subprocess
 import zipfile
 import pandas as pd
 from PIL import Image
+from threading import Thread
+import time
+from multiprocessing import Pool, Process
 
 
 def concatenate_csv_files(file_paths: List[str]) -> pd.DataFrame:
@@ -97,6 +100,11 @@ def read_json_file(file_path):
     except json.JSONDecodeError as e:
         print(f"JSON decoding error: {e}")
         return None
+        
+
+def save_dict_to_json(dictionary, file_path):
+    with open(file_path, 'w') as json_file:
+        json.dump(dictionary, json_file, indent=4)
 
 
 def create_abs_path(file_name):
@@ -362,6 +370,15 @@ def process_image_in_zip(zip_file_path, png_file_name, process_func):
     return result
 
 
+def check_image_error_in_zip(zip_file_path, png_file_name) -> list:
+    return process_image_in_zip(zip_file_path, png_file_name, check_error)
+
+
+def create_batches_from_list(data, batch_size) -> Iterator:
+    for i in range(0, len(data), batch_size):
+        yield data[i:i+batch_size]
+
+
 def download_chunks_of_dataset(
     repo_name: str,
     batch_size: int,
@@ -432,52 +449,323 @@ def delete_file_or_folder(path):
         print(f"{path} does not exist")
 
 
-# def main():
-#     creds_data = "repo.json"
-#     ramdisk_path = "ramdisk"
-#     temp_file_urls = "download.txt"
-#     batch_name = "batch_"
-#     batch_number = 1
-#     seed = 432
-#     prefix = "16384-e6-"
+def prefetch_data(
+    ramdisk_path:str, 
+    repo_name: str,
+    token: str,
+    repo_path: str,
+    batch_number:int, 
+    batch_size:int = 2, 
+    numb_of_prefetched_batch:int = 1, 
+    seed:int = 42, 
+    _batch_name:str="batch_",
+    ) -> None:
+    
+    # prefetch multiple batch in advance to prevent download latency during training
+    prefetcher_threads = []
 
-#     # grab token and repo id from json file
-#     repo_id = read_json_file(create_abs_path(creds_data))
+    for thread_count in range(numb_of_prefetched_batch):
+        prefetcher_thread = Thread(
+            target=download_chunks_of_dataset,
+            kwargs={
+                "repo_name": repo_name,
+                "batch_size": batch_size,
+                "offset": batch_size * (batch_number + 1 + thread_count),
+                "token": token,
+                "repo_path": repo_path,
+                "storage_path": ramdisk_path,
+                "seed": seed,
+                "batch_number": batch_number + 1 + thread_count,
+                "batch_name": _batch_name,
+                "_temp_file_name": f"{_batch_name}{batch_number+1+thread_count}.txt",
+            },
+        )
 
-#     # download batch
-#     download_chunks_of_dataset(
-#         repo_name=repo_id["repo_name"],
-#         batch_size=2,
-#         offset=3,
-#         token=repo_id["token"],
-#         repo_path="chunks",
-#         storage_path=ramdisk_path,
-#         seed=seed,
-#         batch_number=batch_number,
-#         batch_name=batch_name
-#     )
+        prefetcher_threads.append(prefetcher_thread)
 
-#     # accessing images and csv data
+    # Start the threads
+    for thread in prefetcher_threads:
+        thread.start()
 
-#     # get list of files in the batch folder
-#     batch_path = os.path.join(create_abs_path(ramdisk_path),f"{batch_name}{batch_number}")
-#     file_list = list_files_in_directory(batch_path)
-#     # get the csvs and convert it to abs path
-#     csvs = regex_search_list(file_list, r".csv")
-#     csvs = [os.path.join(batch_path, csv) for csv in csvs]
-#     # get the zip and convert it to abs path
-#     zips = regex_search_list(file_list, r".zip")
-#     zips = [os.path.join(batch_path, zip) for zip in zips]
-
-#     # combine csvs into 1 dataframe
-#     df_caption = concatenate_csv_files(csvs)
-#     # create zip file path for each image to indicate where the image resides inside the zip
-#     df_caption["zip_file_path"] = (batch_path+"/"+prefix+df_caption.chunk_id+".zip")
-#     # TODO: i think unzipping the files inside a folder is the best choice ? so we dont have to modify the dataloader
-#     # alternatively modify the dataloader and not unzip the files
-
-#     list_files_in_zip("ramdisk/batch_1/16384-e6-6c384a84-b69d-4ed7-bde1-cddcea3009d0.zip")
-#     print()
+    # This shouldn't run if the prefetchers succeed in downloading the entire thing and skip to the next line
+    download_chunks_of_dataset(
+        repo_name=repo_name,
+        batch_size=batch_size,
+        offset=batch_size * batch_number,
+        token=token,
+        repo_path=repo_path,
+        storage_path=ramdisk_path,
+        seed=seed,
+        batch_number=batch_number,
+        batch_name=_batch_name,
+        _temp_file_name=f"{_batch_name}{batch_number}.txt",
+    )
 
 
-# main()
+def validate_files_in_parallel(
+    files_to_check: List[List[str]],  numb_of_validator_threads: Optional[int] = 80 * 32
+) -> Tuple[List[str], float]:
+    """
+    Validates files in parallel using multiprocessing.
+
+    Args:
+        files_to_check (list): a list containing iterable containing zip file name and file name
+            ie: [("zip_file_path1", "filename_in_zip_file1"), ("zip_file_path2", "filename_in_zip_file2")]
+        numb_of_validator_threads (int, optional): The number of processes or threads to use. 
+            Defaults to 80 * 32 (please change this if you're not using TPU lol).
+
+    Returns:
+        List[str]: A list of broken file names.
+    """
+    start = time.time()
+
+    broken_files = []
+    # chunk into multiple batches
+    for validation_batches in create_batches_from_list(files_to_check, numb_of_validator_threads):
+        # do parallel validation using multiprocessing
+        with Pool(processes=numb_of_validator_threads) as pool:
+            results = pool.starmap(check_image_error_in_zip, validation_batches)
+        # store the broken file name as string
+        broken_files.append(results)
+
+    broken_files = flatten_list(broken_files)
+    stop = time.time()
+    time_taken = stop-start
+    return broken_files, time_taken
+
+
+def validate_downloaded_batch(
+    absolute_batch_path:str,  
+    prefix:str,
+    csv_zip_file_path_col:str,
+    csv_filenames_col: str,
+    numb_of_validator_threads: Optional[int] = 80 * 32,
+    _debug_mode_validation: Optional[bool] = False
+    ) -> Tuple[List[str], float]:
+    """
+    Validates files in a downloaded batch in parallel using multiprocessing.
+
+    Args:
+        absolute_batch_path (str): The absolute path to the downloaded batch directory.
+        prefix (str): Prefix for the zip file paths.
+        csv_zip_file_path_col (str): Column name for storing the zip file paths in the DataFrame.
+        csv_filenames_col (str): Column name for storing the filenames in the DataFrame.
+        numb_of_validator_threads (int, optional): The number of processes or threads to use for validation. 
+            Defaults to 80 * 32 (please change this if you're not using TPU lol).
+        _debug_mode_validation (Optional[bool]): only validates a fraction of the files.
+    """
+
+    file_list = list_files_in_directory(absolute_batch_path)
+    
+    # Get the csvs and convert them to absolute paths
+    csvs = regex_search_list(file_list, r".csv")
+    csvs = [os.path.join(absolute_batch_path, csv) for csv in csvs]
+    
+    # Get the zips and convert them to absolute paths
+    zips = regex_search_list(file_list, r".zip")
+    zips = [os.path.join(absolute_batch_path, zip) for zip in zips]
+
+    # Combine csvs into one dataframe
+    df_caption = concatenate_csv_files(csvs)
+    
+    # Create zip file path for each image to indicate where the image resides inside the zip
+    df_caption[csv_zip_file_path_col] = absolute_batch_path + "/" + prefix + df_caption.chunk_id + ".zip"
+
+    # Store filename and zip folder in a list 
+    # [(file1, zip_path1), (file2, zip_path2)]
+    file_to_check = list(zip(df_caption[csv_zip_file_path_col].tolist(), df_caption[csv_filenames_col].tolist()))
+    if _debug_mode_validation and len(file_to_check) > numb_of_validator_threads:
+        print(f"debug mode: only checking {numb_of_validator_threads} files out of {len(file_to_check)}")
+        file_to_check = file_to_check[:numb_of_validator_threads]
+
+    broken_files, time_taken = validate_files_in_parallel(files_to_check=file_to_check, numb_of_validator_threads=numb_of_validator_threads)
+    return broken_files, time_taken
+
+
+
+def download_chunks_of_dataset_with_validation(
+    repo_name: str,
+    batch_size: int,
+    offset: int,
+    storage_path: str,
+    batch_number: str,
+    prefix:str,
+    csv_zip_file_path_col:str,
+    csv_filenames_col: str,
+    numb_of_validator_threads: Optional[int] = 80 * 32,
+    batch_name: Optional[str] = "batch_",
+    token: Optional[str] = None,
+    repo_path: Optional[str] = None,
+    seed: Optional[int] = 42,
+    _temp_file_name: Optional[str] = "aria_download_url_temp.txt",
+    _manifest_file_name: Optional[str] = "manifest.json",
+    _debug_mode_validation: Optional[bool] = False
+) -> None:
+    """
+    Download data chunks from a specified repository using the Aria2 download manager.
+
+    Args:
+        repo_name (str): The name of the repository to download data from.
+        batch_size (int): The number of items to download in each batch.
+        offset (int): The starting index of the dataset to download.
+        storage_path (str): The directory where downloaded data will be stored.
+        batch_number (str): A unique identifier for the current download batch.
+        prefix (str): Prefix for the zip file paths.
+        csv_zip_file_path_col (str): Column name for storing the zip file paths in the DataFrame.
+        csv_filenames_col (str): Column name for storing the filenames in the DataFrame.
+        numb_of_validator_threads (int, optional): The number of processes or threads to use for validation. 
+            Defaults to 80 * 32 (please change this if you're not using TPU lol).
+        batch_name (Optional[str]): Prefix for batch directory names (default: "batch_").
+        token (Optional[str]): Authentication token if required (default: None).
+        repo_path (Optional[str]): The path to the specific dataset within the repository (default: None).
+        seed (Optional[int]): Random seed for data sampling (default: 42).
+        _temp_file_name (Optional[str]): Temporary file name for storing download URLs (default: "aria_download_url_temp.txt").
+        _manifest_file_name (Optional[str]): manifest file that contains batch details (default: ""manifest.json").
+        _debug_mode_validation (Optional[bool]): only validates a fraction of the files.
+    """
+    # convert to absolute path
+    ramdisk_path = create_abs_path(storage_path)
+    download_dir = os.path.join(ramdisk_path, f"{batch_name}{batch_number}")
+    urls_file = os.path.join(ramdisk_path, _temp_file_name)
+    manifest_file = os.path.join(download_dir, "manifest.json")
+
+    data = get_sample_from_repo(
+        repo_name=repo_name,
+        token=token,
+        repo_path=repo_path,
+        seed=seed,
+        batch_size=batch_size,
+        offset=offset,
+    )
+
+    # grab the urls and extract file name from urls
+    file_urls = flatten_list(data[0])
+    # create a list of url strings and args that supported by aria2
+    aria_format = [
+        f"{file_name}\n\tout={file_name.split('/')[-1]}\n" for file_name in file_urls
+    ]
+    # put the urls into a temporary txt file so aria can download it
+    write_urls_to_file(aria_format, urls_file)
+    
+
+    # if manifest file is not found then perform image check
+    if not os.path.exists(manifest_file):
+        print(f"creating manifest file for batch {batch_name}{batch_number}")
+
+        # use aria to download everything
+        download_with_aria2(
+            download_directory=download_dir,
+            urls_file=urls_file,
+            auth_token=token,
+        )
+
+        broken_files,time_taken=validate_downloaded_batch(
+            absolute_batch_path=download_dir,
+            prefix=prefix,
+            csv_zip_file_path_col=csv_zip_file_path_col,
+            csv_filenames_col=csv_filenames_col,
+            numb_of_validator_threads=numb_of_validator_threads,
+            _debug_mode_validation=_debug_mode_validation
+        )
+
+        # just store this details for now
+        audit_manifest ={
+            "broken_files_audit_result":{
+                "broken_files":broken_files,
+                "time_taken":time_taken
+
+            }
+        }
+        print(f"manifest file for batch {batch_name}{batch_number} created and stored at {manifest_file}")
+        save_dict_to_json(audit_manifest, manifest_file)
+    else:
+        print(f"manifest file for this {batch_name}{batch_number} exist, skipping validation for this batch")
+
+
+def prefetch_data_with_validation(
+    ramdisk_path:str, 
+    repo_name: str,
+    token: str,
+    repo_path: str,
+    batch_number:int, 
+    prefix:str,
+    csv_zip_file_path_col:str,
+    csv_filenames_col: str,
+    numb_of_validator_threads: Optional[int] = 80 * 32,
+    batch_size:int = 2, 
+    numb_of_prefetched_batch:int = 1, 
+    seed:int = 42, 
+    _batch_name:str="batch_",
+    _debug_mode_validation: Optional[bool] = False
+    ) -> None:
+    """
+    Prefetch data with validation from a remote repository into a local storage.
+
+    Args:
+        ramdisk_path (str): The path to the local storage (RAM disk) where data will be stored.
+        repo_name (str): The name of the remote repository.
+        token (str): The authentication token for accessing the remote repository.
+        repo_path (str): The path within the remote repository where data is located.
+        batch_number (int): The batch number to process.
+        prefix (str): Prefix for the zip file paths.
+        csv_zip_file_path_col (str): Column name for storing the zip file paths in the DataFrame.
+        csv_filenames_col (str): Column name for storing the filenames in the DataFrame.
+        numb_of_validator_threads (Optional[int], optional): The number of validator threads. Defaults to 80 * 32.
+        batch_size (int, optional): The batch size. Defaults to 2.
+        numb_of_prefetched_batch (int, optional): The number of batches to prefetch in advance. Defaults to 1.
+        seed (int, optional): The random seed for data retrieval. Defaults to 42.
+        _batch_name (str, optional): The base name for the batches. Defaults to "batch_".
+        _debug_mode_validation (Optional[bool]): only validates a fraction of the files.
+    """
+    
+    # prefetch multiple batch in advance to prevent download latency during training
+    prefetcher_processes = []
+
+    for thread_count in range(numb_of_prefetched_batch):
+        prefetcher_thread = Process(
+            target=download_chunks_of_dataset_with_validation,
+            kwargs={
+                "repo_name": repo_name,
+                "batch_size": batch_size,
+                "offset": batch_size * (batch_number + 1 + thread_count),
+                "token": token,
+                "repo_path": repo_path,
+                "storage_path": ramdisk_path,
+                "seed": seed,
+                "batch_number": batch_number + 1 + thread_count,
+                "batch_name": _batch_name,
+                "prefix":prefix,
+                "csv_zip_file_path_col":csv_zip_file_path_col,
+                "csv_filenames_col":csv_filenames_col,
+                "numb_of_validator_threads":numb_of_validator_threads,
+                "_debug_mode_validation":_debug_mode_validation,
+                "_temp_file_name": f"{_batch_name}{batch_number+1+thread_count}.txt",
+            },
+        )
+
+        prefetcher_processes.append(prefetcher_thread)
+
+    # Start the threads
+    for process in prefetcher_processes:
+        process.start()
+
+    # This shouldn't run if the prefetchers succeed in downloading the entire thing and skip to the next line
+    download_chunks_of_dataset_with_validation(
+        repo_name=repo_name,
+        batch_size=batch_size,
+        offset=batch_size * batch_number,
+        token=token,
+        repo_path=repo_path,
+        storage_path=ramdisk_path,
+        seed=seed,
+        batch_number=batch_number,
+        batch_name=_batch_name,
+        prefix=prefix,
+        csv_zip_file_path_col=csv_zip_file_path_col,
+        csv_filenames_col=csv_filenames_col,
+        numb_of_validator_threads=numb_of_validator_threads,
+        _debug_mode_validation=_debug_mode_validation,
+        _temp_file_name=f"{_batch_name}{batch_number}.txt",
+
+
+    )

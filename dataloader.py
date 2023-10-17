@@ -2,15 +2,25 @@
 import os
 from threading import Thread
 import pandas as pd
+from typing import Optional, List
+from multiprocessing import Pool
+import time
 
 from batch_downloader import (
     read_json_file,
-    download_chunks_of_dataset,
+    # download_chunks_of_dataset,
     regex_search_list,
     concatenate_csv_files,
     create_abs_path,
     list_files_in_directory,
     delete_file_or_folder,
+    prefetch_data,
+    prefetch_data_with_validation,
+    # create_batches_from_list,
+    # check_image_error_in_zip,
+    # flatten_list,
+    # validate_files_in_parallel,
+    # validate_downloaded_batch,
 )
 
 from dataframe_processor import create_tag_based_training_dataframe
@@ -26,21 +36,41 @@ from batch_processor import (
 class DataLoader:
     def __init__(
         self,
-        disk_path: str,
-        numb_of_chunk_per_batch: int = 2,
-        seed: int = 42,
-        temp_file_urls: str = "temp_download_url.txt",
-    ) -> None:
-        self.numb_of_chunk_per_batch = numb_of_chunk_per_batch
+        creds_data:str,  # Replace Any with the actual type of creds_data
+        ramdisk_path: str,
+        batch_number: int,  # This should be incremented for each successful data loading
+        seed: int = 432,  # This should be incremented when all batches are processed
+        batch_size: int = 2,
+        numb_of_prefetched_batch: int = 2,
+        maximum_resolution_areas: List[int] = [576**2, 704**2, 832**2, 960**2, 1088**2],
+        bucket_lower_bound_resolutions: List[int] = [384, 512, 576, 704, 832],
+        _batch_name: str = "batch_",
+        _prefix: str = "16384-e6-",
+    ):
+        
+        self.creds_data = creds_data
+        self.ramdisk_path = ramdisk_path
+        self.batch_number = batch_number
+        self.seed = seed
+        self.batch_size = batch_size
+        self.numb_of_prefetched_batch = numb_of_prefetched_batch
+        self.maximum_resolution_areas = maximum_resolution_areas
+        self.bucket_lower_bound_resolutions = bucket_lower_bound_resolutions
+        self._batch_name = _batch_name
+        self._prefix = _prefix
+
+        self.repo_id = read_json_file(create_abs_path(creds_data))
+
 
 
 def main():
     creds_data = "repo.json"
     ramdisk_path = "ramdisk"
-    temp_file_urls = "download.txt"
+    repo_path = "chunks"
     batch_name = "batch_"
     batch_number = 0  # <<< this should be incremented for each sucessfull dataloading
     batch_size = 2
+    numb_of_prefetched_batch = 1
     seed = 432  # <<< this should be incremented when all batch is processed
     prefix = "16384-e6-"
     MAXIMUM_RESOLUTION_AREA = [576**2, 704**2, 832**2, 960**2, 1088**2]
@@ -48,6 +78,9 @@ def main():
 
     # grab token and repo id from json file
     repo_id = read_json_file(create_abs_path(creds_data))
+
+    # TODO: convert this to a class NO NEED :kek: 
+    # when it initialized 
 
     # TODO:this download should run in a separate thread and have batch offset
     # no! actually run this function twice, first sequential then concurrent,
@@ -57,45 +90,33 @@ def main():
     # so it skips again and the thread prefetch the next batch
     # download batch
 
+    # TODO: add image check functionality for prefetched batch
+    # not sure for the first batch tho i think i need to add counter to indicate if the first batch need to be checked
+    # just add indicator file named "is_audited.txt" or something i think   
+
     # the prefetcher thread
     # the prefetcher ensures the next batch will be ready before the training loop even start
-    prefetcher_thread = Thread(
-        target=download_chunks_of_dataset,
-        kwargs={
-            "repo_name": repo_id["repo_name"],
-            "batch_size": batch_size,
-            "offset": batch_size
-            * (
-                batch_number + 1
-            ),  # prevent batch overlap so it retreive full chunk + 1 for prefetch
-            "token": repo_id["token"],
-            "repo_path": "chunks",
-            "storage_path": ramdisk_path,
-            "seed": seed,
-            "batch_number": batch_number + 1,
-            "batch_name": batch_name,
-            "_temp_file_name": f"{batch_name}{batch_number+1}.txt",
-        },
-    )
-    # fork and start thread
-    prefetcher_thread.start()
 
-    # this souldn't run if the prefetcher succeed downloading the entire thing and skips to the next line
-    download_chunks_of_dataset(
+    # download multiple prefetched batch in advance 
+    prefetch_data_with_validation(
+        ramdisk_path=ramdisk_path,
         repo_name=repo_id["repo_name"],
-        batch_size=batch_size,
-        offset=batch_size
-        * batch_number,  # prevent batch overlap so it retreive full chunk
         token=repo_id["token"],
-        repo_path="chunks",
-        storage_path=ramdisk_path,
-        seed=seed,
+        repo_path=repo_path,
         batch_number=batch_number,
-        batch_name=batch_name,
-        _temp_file_name=f"{batch_name}{batch_number}.txt",
-    )
+        batch_size=batch_size,
+        numb_of_prefetched_batch=numb_of_prefetched_batch,
+        seed=seed,
+        prefix=prefix,
+        csv_zip_file_path_col="zip_file_path",
+        csv_filenames_col="filename",
+        numb_of_validator_threads= 80 * 16,
+        _debug_mode_validation=True,
 
-    # dataloader part
+    )
+    
+
+    # dataloader part also validation part
     # accessing images and csv data
     # get list of files in the batch folder
     batch_path = os.path.join(
@@ -115,8 +136,6 @@ def main():
     df_caption["zip_file_path"] = (
         batch_path + "/" + prefix + df_caption.chunk_id + ".zip"
     )
-    # TODO: i think unzipping the files inside a folder is the best choice ? so we dont have to modify the dataloader
-    # alternatively modify the dataloader and not unzip the
 
     # create multiresolution caption
     training_df = create_tag_based_training_dataframe(
@@ -131,9 +150,9 @@ def main():
         bucket_lower_bound_resolutions=BUCKET_LOWER_BOUND_RESOLUTION,  # modify this if you want long or wide image
         extreme_aspect_ratio_clip=2.0,  # modify this if you want long or wide image
     )
+    
 
-    # rebundle all thread
-    prefetcher_thread.join()
+    # dataloader finish part
 
     # delete the current batch after training loop is done to prevent out of storage
     delete_file_or_folder(
