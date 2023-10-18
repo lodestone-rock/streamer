@@ -257,13 +257,13 @@ def get_generate_urls_and_file_name(
     )
 
     # Step 2: Find zip file names to retrieve corresponding CSV files
-    get_zip_files = regex_search_list(list_files, r".zip")
+    get_zip_files = regex_search_list(list_files, r"zip")
 
     # Step 3: Remove '.zip' extension to extract common path patterns
-    get_common_path = [x.split(".")[0] for x in get_zip_files]
+    get_common_path = [f"{x.split('.')[0]}\." for x in get_zip_files]
 
     # Step 4: Retrieve the list of bundle files based on common path patterns
-    get_bundle_files = [regex_search_list(list_files, x)[1:] for x in get_common_path]
+    get_bundle_files = [regex_search_list(list_files, x) for x in get_common_path]
 
     # Step 5: remove huggingface repository path
     get_bundle_files = [
@@ -371,7 +371,17 @@ def process_image_in_zip(zip_file_path, png_file_name, process_func):
 
 
 def check_image_error_in_zip(zip_file_path, png_file_name) -> list:
-    return process_image_in_zip(zip_file_path, png_file_name, check_error)
+    with zipfile.ZipFile(zip_file_path, "r") as archive:
+        with archive.open(png_file_name) as filename:
+            list_broken_image = []
+            try:
+                with Image.open(filename) as im:
+                    im = im.transpose(Image.FLIP_LEFT_RIGHT)
+            except Exception as e:
+                print(f"image error {png_file_name}: {e}")
+                list_broken_image.append(png_file_name)
+            return list_broken_image
+
 
 
 def create_batches_from_list(data, batch_size) -> Iterator:
@@ -537,9 +547,9 @@ def validate_files_in_parallel(
 def validate_downloaded_batch(
     absolute_batch_path:str,  
     prefix:str,
-    csv_zip_file_path_col:str,
     csv_filenames_col: str,
     numb_of_validator_threads: Optional[int] = 80 * 32,
+    _csv_zip_file_path_col:str="zip_file_path",
     _debug_mode_validation: Optional[bool] = False
     ) -> Tuple[List[str], float]:
     """
@@ -548,10 +558,10 @@ def validate_downloaded_batch(
     Args:
         absolute_batch_path (str): The absolute path to the downloaded batch directory.
         prefix (str): Prefix for the zip file paths.
-        csv_zip_file_path_col (str): Column name for storing the zip file paths in the DataFrame.
         csv_filenames_col (str): Column name for storing the filenames in the DataFrame.
         numb_of_validator_threads (int, optional): The number of processes or threads to use for validation. 
             Defaults to 80 * 32 (please change this if you're not using TPU lol).
+        _csv_zip_file_path_col (str): Column name for storing the zip file paths in the DataFrame (default: "zip_file_path").
         _debug_mode_validation (Optional[bool]): only validates a fraction of the files.
     """
 
@@ -569,11 +579,11 @@ def validate_downloaded_batch(
     df_caption = concatenate_csv_files(csvs)
     
     # Create zip file path for each image to indicate where the image resides inside the zip
-    df_caption[csv_zip_file_path_col] = absolute_batch_path + "/" + prefix + df_caption.chunk_id + ".zip"
+    df_caption[_csv_zip_file_path_col] = absolute_batch_path + "/" + prefix + df_caption.chunk_id + ".zip"
 
     # Store filename and zip folder in a list 
     # [(file1, zip_path1), (file2, zip_path2)]
-    file_to_check = list(zip(df_caption[csv_zip_file_path_col].tolist(), df_caption[csv_filenames_col].tolist()))
+    file_to_check = list(zip(df_caption[_csv_zip_file_path_col].tolist(), df_caption[csv_filenames_col].tolist()))
     if _debug_mode_validation and len(file_to_check) > numb_of_validator_threads:
         print(f"debug mode: only checking {numb_of_validator_threads} files out of {len(file_to_check)}")
         file_to_check = file_to_check[:numb_of_validator_threads]
@@ -590,13 +600,13 @@ def download_chunks_of_dataset_with_validation(
     storage_path: str,
     batch_number: str,
     prefix:str,
-    csv_zip_file_path_col:str,
     csv_filenames_col: str,
     numb_of_validator_threads: Optional[int] = 80 * 32,
     batch_name: Optional[str] = "batch_",
     token: Optional[str] = None,
     repo_path: Optional[str] = None,
     seed: Optional[int] = 42,
+    _csv_zip_file_path_col:str="zip_file_path",
     _temp_file_name: Optional[str] = "aria_download_url_temp.txt",
     _manifest_file_name: Optional[str] = "manifest.json",
     _debug_mode_validation: Optional[bool] = False
@@ -611,7 +621,7 @@ def download_chunks_of_dataset_with_validation(
         storage_path (str): The directory where downloaded data will be stored.
         batch_number (str): A unique identifier for the current download batch.
         prefix (str): Prefix for the zip file paths.
-        csv_zip_file_path_col (str): Column name for storing the zip file paths in the DataFrame.
+        _csv_zip_file_path_col (str): Column name for storing the zip file paths in the DataFrame (default: "zip_file_path").
         csv_filenames_col (str): Column name for storing the filenames in the DataFrame.
         numb_of_validator_threads (int, optional): The number of processes or threads to use for validation. 
             Defaults to 80 * 32 (please change this if you're not using TPU lol).
@@ -662,7 +672,7 @@ def download_chunks_of_dataset_with_validation(
         broken_files,time_taken=validate_downloaded_batch(
             absolute_batch_path=download_dir,
             prefix=prefix,
-            csv_zip_file_path_col=csv_zip_file_path_col,
+            _csv_zip_file_path_col=_csv_zip_file_path_col,
             csv_filenames_col=csv_filenames_col,
             numb_of_validator_threads=numb_of_validator_threads,
             _debug_mode_validation=_debug_mode_validation
@@ -689,13 +699,13 @@ def prefetch_data_with_validation(
     repo_path: str,
     batch_number:int, 
     prefix:str,
-    csv_zip_file_path_col:str,
     csv_filenames_col: str,
     numb_of_validator_threads: Optional[int] = 80 * 32,
     batch_size:int = 2, 
     numb_of_prefetched_batch:int = 1, 
     seed:int = 42, 
-    _batch_name:str="batch_",
+    _csv_zip_file_path_col:str="zip_file_path",
+    _batch_name:str=None,
     _debug_mode_validation: Optional[bool] = False
     ) -> None:
     """
@@ -708,16 +718,17 @@ def prefetch_data_with_validation(
         repo_path (str): The path within the remote repository where data is located.
         batch_number (int): The batch number to process.
         prefix (str): Prefix for the zip file paths.
-        csv_zip_file_path_col (str): Column name for storing the zip file paths in the DataFrame.
         csv_filenames_col (str): Column name for storing the filenames in the DataFrame.
         numb_of_validator_threads (Optional[int], optional): The number of validator threads. Defaults to 80 * 32.
         batch_size (int, optional): The batch size. Defaults to 2.
         numb_of_prefetched_batch (int, optional): The number of batches to prefetch in advance. Defaults to 1.
         seed (int, optional): The random seed for data retrieval. Defaults to 42.
-        _batch_name (str, optional): The base name for the batches. Defaults to "batch_".
+        _csv_zip_file_path_col (str): Column name for storing the zip file paths in the DataFrame Defaults to "zip_file_path".
+        _batch_name (str, optional): The base name for the batches. Defaults to `prefix`.
         _debug_mode_validation (Optional[bool]): only validates a fraction of the files.
     """
-    
+    if _batch_name == None:
+        _batch_name=prefix
     # prefetch multiple batch in advance to prevent download latency during training
     prefetcher_processes = []
 
@@ -735,11 +746,11 @@ def prefetch_data_with_validation(
                 "batch_number": batch_number + 1 + thread_count,
                 "batch_name": _batch_name,
                 "prefix":prefix,
-                "csv_zip_file_path_col":csv_zip_file_path_col,
+                "_csv_zip_file_path_col":_csv_zip_file_path_col,
                 "csv_filenames_col":csv_filenames_col,
                 "numb_of_validator_threads":numb_of_validator_threads,
                 "_debug_mode_validation":_debug_mode_validation,
-                "_temp_file_name": f"{_batch_name}{batch_number+1+thread_count}.txt",
+                "_temp_file_name": f"{prefix}{batch_number+1+thread_count}.txt",
             },
         )
 
@@ -761,11 +772,11 @@ def prefetch_data_with_validation(
         batch_number=batch_number,
         batch_name=_batch_name,
         prefix=prefix,
-        csv_zip_file_path_col=csv_zip_file_path_col,
+        _csv_zip_file_path_col=_csv_zip_file_path_col,
         csv_filenames_col=csv_filenames_col,
         numb_of_validator_threads=numb_of_validator_threads,
         _debug_mode_validation=_debug_mode_validation,
-        _temp_file_name=f"{_batch_name}{batch_number}.txt",
+        _temp_file_name=f"{prefix}{batch_number}.txt",
 
 
     )

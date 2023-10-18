@@ -69,9 +69,8 @@ def main():
     repo_path = "chunks"
     batch_name = "batch_"
     batch_number = 0  # <<< this should be incremented for each sucessfull dataloading
-    batch_size = 2
     numb_of_prefetched_batch = 1
-    seed = 432  # <<< this should be incremented when all batch is processed
+    seed = 42  # <<< this should be incremented when all batch is processed
     prefix = "16384-e6-"
     MAXIMUM_RESOLUTION_AREA = [576**2, 704**2, 832**2, 960**2, 1088**2]
     BUCKET_LOWER_BOUND_RESOLUTION = [384, 512, 576, 704, 832]
@@ -98,23 +97,23 @@ def main():
     # the prefetcher ensures the next batch will be ready before the training loop even start
 
     # download multiple prefetched batch in advance 
-    prefetch_data_with_validation(
-        ramdisk_path=ramdisk_path,
-        repo_name=repo_id["repo_name"],
-        token=repo_id["token"],
-        repo_path=repo_path,
-        batch_number=batch_number,
-        batch_size=batch_size,
-        numb_of_prefetched_batch=numb_of_prefetched_batch,
-        seed=seed,
-        prefix=prefix,
-        csv_zip_file_path_col="zip_file_path",
-        csv_filenames_col="filename",
-        numb_of_validator_threads= 80 * 16,
-        _debug_mode_validation=True,
-
-    )
-    
+    # get all required repo by looping through json
+    # TODO: URGENT! test if batch increment is working as intended and has no overlaping file (which i doubt)
+    for x in range(0,3):
+        prefetch_data_with_validation(
+            ramdisk_path=ramdisk_path,
+            repo_name=repo_id[f"repo_{x}"]["name"],
+            token=repo_id["token"],
+            repo_path=repo_path,
+            batch_number=batch_number,
+            batch_size=repo_id[f"repo_{x}"]["file_per_batch"],
+            numb_of_prefetched_batch=numb_of_prefetched_batch,
+            seed=seed,
+            prefix=repo_id[f"repo_{x}"]["prefix"],
+            csv_filenames_col="filename",
+            numb_of_validator_threads= 80 * 16,
+            _debug_mode_validation=False,
+        )
 
     # dataloader part also validation part
     # accessing images and csv data
@@ -151,6 +150,39 @@ def main():
         extreme_aspect_ratio_clip=2.0,  # modify this if you want long or wide image
     )
     
+
+
+
+    # def generate_batch_wrapper(
+    #     list_of_batch: list,
+    #     queue: Queue,
+    #     print_debug: bool = False):
+    # # loop until queue is full
+    #     for batch in list_of_batch:
+    #         current_batch = generate_batch(
+    #             process_image_fn=process_image,
+    #             tokenize_text_fn=tokenize_text,
+    #             tokenizer=tokenizer,
+    #             dataframe=data_processed.iloc[batch *
+    #                                             batch_size:batch*batch_size+batch_size],
+    #             folder_path=image_folder,
+    #             image_name_col=image_name_col,
+    #             caption_col=caption_col,
+    #             caption_token_length=token_length,
+    #             width_col=width_height[0],
+    #             height_col=width_height[1],
+    #             tokenizer_path=model_dir,
+    #             batch_slice=token_concatenate_count
+    #         )
+    #         if print_debug and queue.full():
+    #             print("queue is full!")
+    #         # put task in queue
+    #         queue.put(current_batch)
+    #         if print_debug:
+    #             print(f"putting task {batch} into queue")
+
+
+
 
     # dataloader finish part
 
