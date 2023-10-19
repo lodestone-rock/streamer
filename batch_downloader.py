@@ -458,7 +458,7 @@ def delete_file_or_folder(path):
     else:
         print(f"{path} does not exist")
 
-
+# deprecated soon
 def prefetch_data(
     ramdisk_path:str, 
     repo_name: str,
@@ -609,7 +609,8 @@ def download_chunks_of_dataset_with_validation(
     _csv_zip_file_path_col:str="zip_file_path",
     _temp_file_name: Optional[str] = "aria_download_url_temp.txt",
     _manifest_file_name: Optional[str] = "manifest.json",
-    _debug_mode_validation: Optional[bool] = False
+    _debug_mode_validation: Optional[bool] = False,
+    _disable_validation: Optional[bool] = False,
 ) -> None:
     """
     Download data chunks from a specified repository using the Aria2 download manager.
@@ -632,6 +633,7 @@ def download_chunks_of_dataset_with_validation(
         _temp_file_name (Optional[str]): Temporary file name for storing download URLs (default: "aria_download_url_temp.txt").
         _manifest_file_name (Optional[str]): manifest file that contains batch details (default: ""manifest.json").
         _debug_mode_validation (Optional[bool]): only validates a fraction of the files.
+        _disable_validation (Optional[bool]): disable validation mode entirely.
     """
     # convert to absolute path
     ramdisk_path = create_abs_path(storage_path)
@@ -658,38 +660,42 @@ def download_chunks_of_dataset_with_validation(
     write_urls_to_file(aria_format, urls_file)
     
 
-    # if manifest file is not found then perform image check
-    if not os.path.exists(manifest_file):
-        print(f"creating manifest file for batch {batch_name}{batch_number}")
+    if not _disable_validation:
+        # if manifest file is not found then perform image check
+        if not os.path.exists(manifest_file):
+            print(f"creating manifest file for batch {batch_name}{batch_number}")
 
-        # use aria to download everything
-        download_with_aria2(
-            download_directory=download_dir,
-            urls_file=urls_file,
-            auth_token=token,
-        )
+            # use aria to download everything
+            download_with_aria2(
+                download_directory=download_dir,
+                urls_file=urls_file,
+                auth_token=token,
+            )
 
-        broken_files,time_taken=validate_downloaded_batch(
-            absolute_batch_path=download_dir,
-            prefix=prefix,
-            _csv_zip_file_path_col=_csv_zip_file_path_col,
-            csv_filenames_col=csv_filenames_col,
-            numb_of_validator_threads=numb_of_validator_threads,
-            _debug_mode_validation=_debug_mode_validation
-        )
+            broken_files,time_taken=validate_downloaded_batch(
+                absolute_batch_path=download_dir,
+                prefix=prefix,
+                _csv_zip_file_path_col=_csv_zip_file_path_col,
+                csv_filenames_col=csv_filenames_col,
+                numb_of_validator_threads=numb_of_validator_threads,
+                _debug_mode_validation=_debug_mode_validation
+            )
 
-        # just store this details for now
-        audit_manifest ={
-            "broken_files_audit_result":{
-                "broken_files":broken_files,
-                "time_taken":time_taken
+            # just store this details for now
+            audit_manifest ={
+                "broken_files_audit_result":{
+                    "broken_files":broken_files,
+                    "time_taken":time_taken
 
+                }
             }
-        }
-        print(f"manifest file for batch {batch_name}{batch_number} created and stored at {manifest_file}")
-        save_dict_to_json(audit_manifest, manifest_file)
+            print(f"manifest file for batch {batch_name}{batch_number} created and stored at {manifest_file}")
+            save_dict_to_json(audit_manifest, manifest_file)
+        else:
+            print(f"manifest file for this {batch_name}{batch_number} exist, skipping validation for this batch")
+    
     else:
-        print(f"manifest file for this {batch_name}{batch_number} exist, skipping validation for this batch")
+        print(f"validation is disabled not creating manifest for this {batch_name}{batch_number}")
 
 
 def prefetch_data_with_validation(
@@ -706,7 +712,8 @@ def prefetch_data_with_validation(
     seed:int = 42, 
     _csv_zip_file_path_col:str="zip_file_path",
     _batch_name:str=None,
-    _debug_mode_validation: Optional[bool] = False
+    _debug_mode_validation: Optional[bool] = False,
+    _disable_validation: Optional[bool] = False,
     ) -> None:
     """
     Prefetch data with validation from a remote repository into a local storage.
@@ -726,6 +733,7 @@ def prefetch_data_with_validation(
         _csv_zip_file_path_col (str): Column name for storing the zip file paths in the DataFrame Defaults to "zip_file_path".
         _batch_name (str, optional): The base name for the batches. Defaults to `prefix`.
         _debug_mode_validation (Optional[bool]): only validates a fraction of the files.
+        _disable_validation (Optional[bool]): disable validation mode entirely.
     """
     if _batch_name == None:
         _batch_name=prefix
@@ -751,6 +759,7 @@ def prefetch_data_with_validation(
                 "numb_of_validator_threads":numb_of_validator_threads,
                 "_debug_mode_validation":_debug_mode_validation,
                 "_temp_file_name": f"{prefix}{batch_number+1+thread_count}.txt",
+                "_disable_validation":_disable_validation,
             },
         )
 
@@ -777,6 +786,7 @@ def prefetch_data_with_validation(
         numb_of_validator_threads=numb_of_validator_threads,
         _debug_mode_validation=_debug_mode_validation,
         _temp_file_name=f"{prefix}{batch_number}.txt",
+        _disable_validation=_disable_validation,
 
 
     )

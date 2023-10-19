@@ -4,3 +4,4 @@ init.sh
 repo.json
 *.log
 __pycache__/
+*.png
