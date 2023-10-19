@@ -192,6 +192,8 @@ def resolution_bucketing_batch_with_chunking(
 
     for bucket, data in bucket_group:
         # generate first batch
+        if len(data) < bucket_batch_size:
+            continue
         first_sample = data.sample(bucket_batch_size, replace=False, random_state=seed)
         first_batch.append(first_sample)
 

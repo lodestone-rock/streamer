@@ -573,7 +573,7 @@ def validate_downloaded_batch(
     
     # Get the zips and convert them to absolute paths
     zips = regex_search_list(file_list, r".zip")
-    zips = [os.path.join(absolute_batch_path, zip) for zip in zips]
+    zips = [os.path.join(absolute_batch_path, zip_file) for zip_file in zips]
 
     # Combine csvs into one dataframe
     df_caption = concatenate_csv_files(csvs)
@@ -592,6 +592,38 @@ def validate_downloaded_batch(
     return broken_files, time_taken
 
 
+def unpack_zip_files(
+    absolute_batch_path:str, absolute_target_dir:str
+    ) -> None:
+    """
+    unzip the image file into one directory
+
+    Args:
+        absolute_batch_path (str): The absolute path to the downloaded batch directory.
+        absolute_target_dir (str): The target directory where the files will be extracted.
+    """
+
+    file_list = list_files_in_directory(absolute_batch_path)
+      
+    # Get the zips and convert them to absolute paths
+    zips = regex_search_list(file_list, r".zip")
+    zips = [os.path.join(absolute_batch_path, zip_file) for zip_file in zips]
+
+    # gonna use lambda function, it's shorter :P
+    unzip_file = lambda zip_path, target_dir: subprocess.run(['7z', 'x', zip_path, f'-o{target_dir}', '-Y'])
+
+    threads = []
+
+    for zip_file in zips:
+        thread = threading.Thread(target=unzip_file, args=(zip_file, absolute_target_dir))
+        threads.append(thread)
+
+    for thread in threads:
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+
 
 def download_chunks_of_dataset_with_validation(
     repo_name: str,
@@ -600,7 +632,6 @@ def download_chunks_of_dataset_with_validation(
     storage_path: str,
     batch_number: str,
     prefix:str,
-    csv_filenames_col: str,
     numb_of_validator_threads: Optional[int] = 80 * 32,
     batch_name: Optional[str] = "batch_",
     token: Optional[str] = None,
@@ -609,6 +640,7 @@ def download_chunks_of_dataset_with_validation(
     _csv_zip_file_path_col:str="zip_file_path",
     _temp_file_name: Optional[str] = "aria_download_url_temp.txt",
     _manifest_file_name: Optional[str] = "manifest.json",
+    _image_folder_name: Optional[str] = "image",
     _debug_mode_validation: Optional[bool] = False,
     _disable_validation: Optional[bool] = False,
 ) -> None:
@@ -623,9 +655,8 @@ def download_chunks_of_dataset_with_validation(
         batch_number (str): A unique identifier for the current download batch.
         prefix (str): Prefix for the zip file paths.
         _csv_zip_file_path_col (str): Column name for storing the zip file paths in the DataFrame (default: "zip_file_path").
-        csv_filenames_col (str): Column name for storing the filenames in the DataFrame.
         numb_of_validator_threads (int, optional): The number of processes or threads to use for validation. 
-            Defaults to 80 * 32 (please change this if you're not using TPU lol).
+            Defaults to 80 * 32 (not implemented yet!).
         batch_name (Optional[str]): Prefix for batch directory names (default: "batch_").
         token (Optional[str]): Authentication token if required (default: None).
         repo_path (Optional[str]): The path to the specific dataset within the repository (default: None).
@@ -659,43 +690,42 @@ def download_chunks_of_dataset_with_validation(
     # put the urls into a temporary txt file so aria can download it
     write_urls_to_file(aria_format, urls_file)
     
+    if not os.path.exists(manifest_file):
 
-    if not _disable_validation:
-        # if manifest file is not found then perform image check
-        if not os.path.exists(manifest_file):
-            print(f"creating manifest file for batch {batch_name}{batch_number}")
+        # use aria to download everything
+        download_with_aria2(
+            download_directory=download_dir,
+            urls_file=urls_file,
+            auth_token=token,
+        )
 
-            # use aria to download everything
-            download_with_aria2(
-                download_directory=download_dir,
-                urls_file=urls_file,
-                auth_token=token,
-            )
+        # unzip and put everything into one folder
+        unpack_zip_files(absolute_batch_path=download_dir, absolute_target_dir=os.path.join(download_dir, _image_folder_name))
+        # delete the zip
+        file_list = list_files_in_directory(download_dir)
+        zips = regex_search_list(file_list, r".zip")
+        zips = [os.path.join(download_dir, zip_file) for zip_file in zips]
+        for zip_file in zips:
+            delete_file_or_folder(zip_file)
 
-            broken_files,time_taken=validate_downloaded_batch(
-                absolute_batch_path=download_dir,
-                prefix=prefix,
-                _csv_zip_file_path_col=_csv_zip_file_path_col,
-                csv_filenames_col=csv_filenames_col,
-                numb_of_validator_threads=numb_of_validator_threads,
-                _debug_mode_validation=_debug_mode_validation
-            )
+        print(f"creating manifest file for batch {batch_name}{batch_number}")
 
-            # just store this details for now
-            audit_manifest ={
-                "broken_files_audit_result":{
-                    "broken_files":broken_files,
-                    "time_taken":time_taken
+        # just store this details for now
+        manifest ={
+            "image_folder":_image_folder_name
+        }
+        print(f"manifest file for batch {batch_name}{batch_number} created and stored at {manifest_file}")
+        save_dict_to_json(manifest, manifest_file)
 
-                }
-            }
-            print(f"manifest file for batch {batch_name}{batch_number} created and stored at {manifest_file}")
-            save_dict_to_json(audit_manifest, manifest_file)
-        else:
-            print(f"manifest file for this {batch_name}{batch_number} exist, skipping validation for this batch")
-    
     else:
-        print(f"validation is disabled not creating manifest for this {batch_name}{batch_number}")
+        print(f"manifest file for this {batch_name}{batch_number} exist, skipping download for this batch")
+
+    if _disable_validation:
+        NotImplementedError
+
+    if _debug_mode_validation:
+        NotImplementedError
+
 
 
 def prefetch_data_with_validation(
@@ -705,7 +735,6 @@ def prefetch_data_with_validation(
     repo_path: str,
     batch_number:int, 
     prefix:str,
-    csv_filenames_col: str,
     numb_of_validator_threads: Optional[int] = 80 * 32,
     batch_size:int = 2, 
     numb_of_prefetched_batch:int = 1, 
@@ -725,8 +754,8 @@ def prefetch_data_with_validation(
         repo_path (str): The path within the remote repository where data is located.
         batch_number (int): The batch number to process.
         prefix (str): Prefix for the zip file paths.
-        csv_filenames_col (str): Column name for storing the filenames in the DataFrame.
-        numb_of_validator_threads (Optional[int], optional): The number of validator threads. Defaults to 80 * 32.
+        numb_of_validator_threads (int, optional): The number of processes or threads to use for validation. 
+            Defaults to 80 * 32 (not implemented yet!).
         batch_size (int, optional): The batch size. Defaults to 2.
         numb_of_prefetched_batch (int, optional): The number of batches to prefetch in advance. Defaults to 1.
         seed (int, optional): The random seed for data retrieval. Defaults to 42.
@@ -755,7 +784,6 @@ def prefetch_data_with_validation(
                 "batch_name": _batch_name,
                 "prefix":prefix,
                 "_csv_zip_file_path_col":_csv_zip_file_path_col,
-                "csv_filenames_col":csv_filenames_col,
                 "numb_of_validator_threads":numb_of_validator_threads,
                 "_debug_mode_validation":_debug_mode_validation,
                 "_temp_file_name": f"{prefix}{batch_number+1+thread_count}.txt",
@@ -782,7 +810,6 @@ def prefetch_data_with_validation(
         batch_name=_batch_name,
         prefix=prefix,
         _csv_zip_file_path_col=_csv_zip_file_path_col,
-        csv_filenames_col=csv_filenames_col,
         numb_of_validator_threads=numb_of_validator_threads,
         _debug_mode_validation=_debug_mode_validation,
         _temp_file_name=f"{prefix}{batch_number}.txt",

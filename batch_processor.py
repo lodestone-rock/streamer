@@ -234,7 +234,6 @@ def numpy_to_pil_and_save(np_image, output_path):
 
     # Save the PIL image to the specified output path
     pil_image.save(output_path)
-
     
 
 def crop_resize_image(image: np.ndarray, size: tuple):
@@ -257,7 +256,7 @@ def crop_resize_image(image: np.ndarray, size: tuple):
     scaling_factor = max(width_scale, height_scale)
 
     # interpolation = cv2.INTER_LANCZOS4
-    if scaling_factor > 1.0:
+    if scaling_factor < 1.0:
         interpolation = cv2.INTER_LANCZOS4
     else:
         interpolation = cv2.INTER_AREA
@@ -328,6 +327,29 @@ def cv2_process_image_in_zip(
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         return crop_resize_image(image, [rescale_size[1], rescale_size[0]])
+
+
+def cv2_process_image(
+    rescale_size: Union[list, tuple],
+    image_path: str,
+) -> np.ndarray:
+    r"""
+    Scale the image resolution to predetermined resolution and return
+    it as a numpy array.
+
+    Args:
+        rescale_size (:obj:`list` or `tuple`):
+            Width and height target.
+        image_path (:obj:`str`):
+            Path to the zip file.
+    Return:
+        np.ndarray
+    """
+
+    image = cv2.imread(image_path)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+    return crop_resize_image(image, [rescale_size[1], rescale_size[0]])
 
 
 def tokenize_text(
@@ -565,6 +587,8 @@ def generate_batch_from_zip_files_concurrent(
         )
 
         return image
+
+
     with TimingContextManager(message="image processing"):
         with Pool(batch_size) as pool:
             batch_image = pool.starmap(
@@ -674,6 +698,96 @@ def generate_batch_from_zip_files(
     batch_image = np.stack(batch_image)
     # as contiguous array
     batch_image = np.ascontiguousarray(batch_image)
+
+    # ###[process token]### #
+    batch_prompt = dataframe.loc[:, caption_col].tolist()
+    tokenizer_dict = tokenize_text_fn(
+        tokenizer=tokenizer,
+        text_prompt=batch_prompt,
+        max_length=caption_token_length,
+        batch_slice=batch_slice,
+    )
+    output = {}
+    output["pixel_values"] = batch_image
+    output["input_ids"] = tokenizer_dict.input_ids
+    output["attention_mask"] = tokenizer_dict.attention_mask
+
+    return output
+
+def generate_batch_concurrent(
+    process_image_fn: Callable[[str, tuple], np.array],
+    tokenize_text_fn: Callable[[str, str, int], dict],
+    tokenizer: CLIPTokenizer,
+    dataframe: pd.DataFrame,
+    image_name_col: str,
+    caption_col: str,
+    caption_token_length: int,
+    width_col: str,
+    height_col: str,
+    batch_slice: int = 1,
+) -> dict:
+    """
+    generate a single batch for training.
+    use this function in a for loop while swapping the dataframe batch
+    depends on process_image and tokenize_text function
+
+    args:
+        process_image_fn (:obj:`Callable`):
+            process_image function
+        process_image_fn (:obj:`Callable`):
+            tokenize_text function
+        tokenizer (:obj:`CLIPTokenizer`):
+            tokenizer class
+        dataframe (:obj:`pd.DataFrame`):
+            input dataframe
+        image_name_col (:obj:`str`):
+            column name inside dataframe filled with ABSOLUTE image path
+        caption_col (:obj:`str`):
+            column name inside dataframe filled with text captions
+        caption_token_length (:obj:`int`):
+            maximum token before clipping
+        width_col (:obj:`str`):
+            column name inside dataframe filled with bucket width of an image
+        height_col (:obj:`str`):
+            column name inside dataframe filled with bucket height of an image
+        batch_slice (:obj:`int`, *optional*, defaults to 1):
+            if greater than 1 it will slice the token into batch evenly
+            (caption_token_length-2) must be divisible by this value
+    return:
+        dict:
+            {
+                "attention_mask": np.array,
+                "input_ids": np.array,
+                "pixel_values": np.array
+            }
+    """
+    # count batch size
+    batch_size = len(dataframe)
+    batch_image = []
+
+    # ###[process image]### #
+    # process batch concurently
+
+    def _process_image_parallel(dataframe, x, image_name_col, width_col, height_col, process_image_fn):
+
+        image_path = dataframe.iloc[x][image_name_col]
+        width_height = [dataframe.iloc[x][width_col], dataframe.iloc[x][height_col]]
+
+        # load image from zip then put it in image processor
+        image = process_image_fn(image_path=image_path, rescale_size=width_height)
+        return image
+
+    # concurrent image proces since cv2 and numpy process are not GIL bound 
+    with Pool(batch_size) as pool:
+        batch_image = pool.starmap(
+            _process_image_parallel,
+            [(dataframe, x, image_name_col, width_col, height_col, process_image_fn) for x in range(batch_size)]
+        )
+
+        # stack image into neat array
+        batch_image = np.stack(batch_image)
+        # as contiguous array
+        batch_image = np.ascontiguousarray(batch_image)
 
     # ###[process token]### #
     batch_prompt = dataframe.loc[:, caption_col].tolist()

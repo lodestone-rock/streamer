@@ -4,6 +4,7 @@ from threading import Thread
 from queue import Queue
 import pandas as pd
 from typing import Optional, List
+import gc
 # from multiprocessing import  Process, Queue
 import time
 
@@ -33,7 +34,9 @@ from batch_processor import (
     process_image_in_zip,
     cv2_process_image_in_zip,
     numpy_to_pil_and_save,
-    generate_batch_from_zip_files_concurrent
+    generate_batch_from_zip_files_concurrent,
+    cv2_process_image,
+    generate_batch_concurrent
 )
 
 from transformers import CLIPTokenizer
@@ -134,9 +137,9 @@ def main():
             numb_of_prefetched_batch=numb_of_prefetched_batch,
             seed=seed,
             prefix=repo_id[f"repo_{x}"]["prefix"],
-            csv_filenames_col="filename",
-            numb_of_validator_threads=80 * 16,
-            _disable_validation=True
+            # csv_filenames_col="filename",
+            # numb_of_validator_threads=80 * 16,
+            # _disable_validation=True
             # _debug_mode_validation=False,
         )
 
@@ -157,9 +160,10 @@ def main():
     # combine csvs into 1 dataframe
     df_caption = concatenate_csv_files(csvs)
     # create zip file path for each image to indicate where the image resides inside the zip
-    df_caption["zip_file_path"] = (
-        batch_path + "/" + prefix + df_caption.chunk_id + ".zip"
-    )
+    df_caption["filepaths"]=batch_path+"/"+"image"+"/"+df_caption["filename"]
+    # df_caption["zip_file_path"] = (
+    #     batch_path + "/" + prefix + df_caption.chunk_id + ".zip"
+    # )
 
     # create multiresolution caption
     training_df = create_tag_based_training_dataframe(
@@ -174,6 +178,10 @@ def main():
         bucket_lower_bound_resolutions=BUCKET_LOWER_BOUND_RESOLUTION,  # modify this if you want long or wide image
         extreme_aspect_ratio_clip=2.0,  # modify this if you want long or wide image
     )
+    
+    # debug to check unique value
+    training_df["combined"]=training_df["new_image_width"].astype(str)+","+training_df["new_image_height"].astype(str)
+    print(training_df.combined.value_counts())
 
     # TODO: run generate batch wrapper and simulate training
     # the put giant try catch block in generate_batch_wrapper so it just skips a batch that has broken image
@@ -204,15 +212,14 @@ def main():
         for batch in list_of_batch:
             try:
                 start = time.time()
-                current_batch = generate_batch_from_zip_files_concurrent(
-                    process_image_fn=cv2_process_image_in_zip,  # function to process image
+                current_batch = generate_batch_concurrent(
+                    process_image_fn=cv2_process_image,  # function to process image
                     tokenize_text_fn=tokenize_text,  # function to do tokenizer wizardry
                     tokenizer=tokenizer,  # tokenizer object
                     dataframe=training_df.iloc[
                         batch * bucket_batch_size : batch * bucket_batch_size + bucket_batch_size # slice the dataframe to only grab that resolution
                     ], # a batch slice 
-                    zip_path_col="zip_file_path",
-                    image_name_col="filename",
+                    image_name_col="filepaths",
                     caption_col="caption",
                     caption_token_length=75 * 3 + 2,
                     width_col="new_image_width",
@@ -228,16 +235,19 @@ def main():
                     print(f"putting {bucket_batch_size} images into {batch} queue took {round(stop-start,4)} seconds")
             
             except Exception as e:
+                queue.put(None) # TODO: skip queue if none
                 print(f"skipping batch {batch} because of this error: {e}")
+        
+        gc.collect()
 
     # get group index as batch order
     assert (
         len(training_df) % bucket_batch_size == 0
     ), f"DATA IS NOT CLEANLY DIVISIBLE BY {bucket_batch_size} {len(training_df)%bucket_batch_size}"
-    batch_order = list(range(0, len(training_df) // bucket_batch_size))
+    batch_order = list(range(0, len(training_df) // bucket_batch_size))[:50]
 
     # store training array here
-    batch_queue = Queue(maxsize=1000)
+    batch_queue = Queue(maxsize=100)
 
     # spawn another process for processing images
     batch_processors = []
@@ -259,12 +269,19 @@ def main():
     # dataloader finish part
 
     # digest the batch
-    for outer in range(1000):
-        with TimingContextManager():
-            batch_queue.get()
-            time.sleep(0.2)
-            # for x, np_image in enumerate(batch_queue.get()["pixel_values"]):
-            #     numpy_to_pil_and_save(np_image, f"{outer}-{x}-pil.png")
+    with TimingContextManager("total queue"):
+        for count, outer in enumerate(batch_order):
+            with TimingContextManager("queue latency"):
+                t = batch_queue.get() # if none skip!
+
+                print(f"batch {count} of {len(batch_order)}")
+                if count == len(batch_order):
+                    break
+                if t == None:
+                    continue
+                # time.sleep(0.01)
+                # for x, np_image in enumerate(t["pixel_values"]):
+                #     numpy_to_pil_and_save(np_image, f"{outer}-{x}-pil.png")
 
     # delete the current batch after training loop is done to prevent out of storage
     delete_file_or_folder(
