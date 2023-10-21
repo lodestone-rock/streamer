@@ -54,16 +54,16 @@ class TimingContextManager:
         execution_time = end_time - self.start_time
         print(f"{self.message} took {execution_time} seconds to execute.")
 
+
 # TODO: should i put stuff in class or i can write a neat function instead
 class DataLoader:
     def __init__(
         self,
-        creds_data: str,  # Replace Any with the actual type of creds_data
+        config: str,  # Replace Any with the actual type of creds_data
         ramdisk_path: str,
-        batch_number: int,  # This should be incremented for each successful data loading
+        chunk_number: int,  # This should be incremented for each successful data loading
         seed: int = 432,  # This should be incremented when all batches are processed
-        batch_size: int = 2,
-        numb_of_prefetched_batch: int = 2,
+        training_batch_size: int = 2,
         maximum_resolution_areas: List[int] = [
             576**2,
             704**2,
@@ -72,22 +72,150 @@ class DataLoader:
             1088**2,
         ],
         bucket_lower_bound_resolutions: List[int] = [384, 512, 576, 704, 832],
-        _batch_name: str = "batch_",
-        _prefix: str = "16384-e6-",
-    ):
-        self.creds_data = creds_data
+        repeat_batch:int = 10,
+        extreme_aspect_ratio_clip:float=2.0
+    ):  
+        # storage path to store the dataset chunk, preferably ramdisk hence the attribute name 
         self.ramdisk_path = ramdisk_path
-        self.batch_number = batch_number
+        # curent chunk number, please keep the seed constant
+        # it will try to grab a next chunk from dataset repo
+        # if you increment the seed please reset this hunk number to 0 to start over
+        # increment the chunk number to grab the next chunk
+        self.chunk_number = chunk_number
+        # rng seed 
         self.seed = seed
-        self.batch_size = batch_size
-        self.numb_of_prefetched_batch = numb_of_prefetched_batch
+        # how big is the training batch loaded to device at a time
+        self.training_batch_size = training_batch_size
+        # absolute limit of the image size in area
         self.maximum_resolution_areas = maximum_resolution_areas
+        # a set of minimum axis pixel count either height or width
         self.bucket_lower_bound_resolutions = bucket_lower_bound_resolutions
-        self._batch_name = _batch_name
-        self._prefix = _prefix
+        # repeat batch during randomizing to ensure the next batch has the same res as previous one
+        # this to prevent jax swapping the cache too often which cause performace degradation when
+        # dealing with variable input array size
+        self.repeat_batch = repeat_batch
+        self.extreme_aspect_ratio_clip = extreme_aspect_ratio_clip
+        # read configuration from json creds
+        # the config file format
+        # {
+        #     "repo": {
+        #         "repo_0": {
+        #             "name": "planetexpress/e6",
+        #             "prefix": "16384-e6-",
+        #             "total_file_count": -1,
+        #             "file_per_batch": 1
+        #             "folder_path_in_repo": "chunks"
+        #             "image_width_col_name": "image_width"
+        #             "image_height_col_name": "image_height"
+        #             "caption_col": "caption"
+        #             "filename_col": "filename"
+        #         },
+        #         "repo_1": {...},
+        #         "repo_2": {...},
+        #         ...
+        #     },
+        #     "token": "hf_token"
+        # }
+        self.config = read_json_file(create_abs_path(config))
+        # training dataframe to be overriden either externaly or using a method
+        # this will eventually be overriden by create_training_dataframe method        
+        self.training_dataframe = None
 
-        self.repo_id = read_json_file(create_abs_path(creds_data))
+        # constant
+        self._first_batch_count = 0
+        self._bulk_batch_count = 0
+        self._width_col = "image_width"
+        self._height_col = "image_height"
+        self._caption_col = "caption"
+        self._filename_col = "filename"
 
+    def grab_and_prefetch_chunk(self, numb_of_prefetched_batch:int=1) -> None:
+        """
+        this will try to grab a chunk of dataset while also prefetch extra chunk for the next round
+        this will download batch of zip files and in one chunk can have multiple zip files and csv
+
+        args:
+        numb_of_prefetched_batch (`int`) (default:`1`): how many prefetched chunk is downloaded conccurently.
+        """
+        repo_details = self.config["repo"]
+        for repo in repo_details.keys():
+            prefetch_data_with_validation(
+                ramdisk_path=self.ramdisk_path,
+                repo_name=repo_details[repo]["name"],
+                token=self.config["token"],
+                repo_path=repo_details[repo]["folder_path_in_repo"],
+                batch_number=self.chunk_number, # chunk at 
+                batch_size=repo_details[repo]["file_per_batch"], # numb of zip and csv to download, should've renamed it
+                numb_of_prefetched_batch=numb_of_prefetched_batch,
+                seed=self.seed,
+                prefix=repo_details[repo]["prefix"],
+            )
+
+    def prepare_training_dataframe(self) -> None:
+        """
+        this method is a custom method please overwrite it to your need
+        or just assign `training_dataframe` attributes directly with your dataframe as long it meets this format:
+
+        """
+        dfs = []
+
+        # i am assuming the csv is identical (which is not!)
+        repo_details = self.config["repo"]
+        for repo in repo_details.keys():
+            chunk_path = os.path.join(
+                create_abs_path(self.ramdisk_path), 
+                f"{repo_details[repo]['prefix']}{self.chunk_number}"
+            )
+            file_list = list_files_in_directory(chunk_path)
+            # get the csvs and convert it to abs path
+            csvs = regex_search_list(file_list, r".csv")
+            csvs = [os.path.join(chunk_path, csv) for csv in csvs]
+            # get the zip and convert it to abs path
+            zips = regex_search_list(file_list, r".zip")
+            zips = [os.path.join(chunk_path, zip) for zip in zips]
+
+            # combine csvs into 1 dataframe
+            df_caption = concatenate_csv_files(csvs)
+            # create zip file path for each image to indicate where the image resides inside the zip
+            df_caption["filepaths"]=chunk_path+"/"+"image"+"/"+df_caption[repo_details[repo]["filename_col"]]
+            df_caption = df_caption.rename(columns={
+                repo_details[repo]["image_width_col_name"]: self._width_col,
+                repo_details[repo]["image_height_col_name"]: self._height_col,
+                repo_details[repo]["caption_col"]: self._caption_col,
+                repo_details[repo]["filename_col"]: self._filename_col,
+                })
+            dfs.append(df_caption)
+        dfs = pd.concat(dfs, axis=0)
+        self.training_dataframe = dfs
+
+    def create_training_dataframe(self) -> None:
+        """
+        this method can be overriden by other method suitable to construct the dataframe
+        this method overrides the training_dataframe attributes by 
+        creating virtual resolution bucket either by downscaling or upscaling.
+        this method also ensures the first batch of the dataset is a unique batch 
+        """
+
+        # this returns tuple (dataframe, first_batch_count, bulk_batch_count)
+        result = create_tag_based_training_dataframe(
+            dataframe=self.training_dataframe,
+            image_width_col_name=self._width_col,
+            image_height_col_name=self._height_col,
+            caption_col=self._caption_col,  # caption column name
+            bucket_batch_size=self.training_batch_size,
+            repeat_batch=self.repeat_batch,
+            seed=self.seed,
+            max_res_areas=self.maximum_resolution_areas,  # modify this if you want long or wide image
+            bucket_lower_bound_resolutions=self.bucket_lower_bound_resolutions,  # modify this if you want long or wide image
+            extreme_aspect_ratio_clip=self.extreme_aspect_ratio_clip,  # modify this if you want long or wide image
+        )
+        self.training_dataframe = result[0]
+        self._first_batch_count = result[1]
+        self._bulk_batch_count = result[2]
+    
+    def prepare_worker_threads(self):
+        # TODO: put the thread here and create a method which is a simple iterator that periodically grab from the queue
+        pass
 
 def main():
     creds_data = "repo.json"
@@ -161,9 +289,7 @@ def main():
     df_caption = concatenate_csv_files(csvs)
     # create zip file path for each image to indicate where the image resides inside the zip
     df_caption["filepaths"]=batch_path+"/"+"image"+"/"+df_caption["filename"]
-    # df_caption["zip_file_path"] = (
-    #     batch_path + "/" + prefix + df_caption.chunk_id + ".zip"
-    # )
+
 
     # create multiresolution caption
     training_df = create_tag_based_training_dataframe(
@@ -187,22 +313,6 @@ def main():
     # the put giant try catch block in generate_batch_wrapper so it just skips a batch that has broken image
     tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
 
-    # batch = 1
-    # current_batch = generate_batch_from_zip_files(
-    #     process_image_fn=process_image_in_zip,  # function to process image
-    #     tokenize_text_fn=tokenize_text,  # function to do tokenizer wizardry
-    #     tokenizer=tokenizer,  # tokenizer object
-    #     dataframe=training_df.iloc[
-    #         batch * bucket_batch_size : batch * bucket_batch_size + bucket_batch_size # slice the dataframe to only grab that resolution
-    #     ], # a batch slice 
-    #     zip_path_col="zip_file_path",
-    #     image_name_col="filename",
-    #     caption_col="caption",
-    #     caption_token_length=75 * 3 + 2,
-    #     width_col="new_image_width",
-    #     height_col="new_image_height",
-    #     batch_slice=3,
-    # )
 
     #### adopted from messy training script
     def generate_batch_wrapper(
@@ -256,6 +366,7 @@ def main():
         batch_processor = Thread(
             target=generate_batch_wrapper,
             args=[
+                # a slice of dataframe batch_order
                 batch_order[t*(len(batch_order)//proces_count):t*(len(batch_order)//proces_count)+(len(batch_order)//proces_count)], 
                 batch_queue, 
                 False]
@@ -294,4 +405,25 @@ def main():
     print()
 
 
-main()
+# main()
+
+dataloader = DataLoader(
+    config="repo2.json",  # Replace Any with the actual type of creds_data
+    ramdisk_path="ramdisk",
+    chunk_number=0,  # This should be incremented for each successful data loading
+    seed=42,  # This should be incremented when all batches are processed
+    training_batch_size=8*1,
+    maximum_resolution_areas=[
+        576**2,
+        704**2,
+        832**2,
+        960**2,
+        1088**2,
+    ],
+    bucket_lower_bound_resolutions=[384, 512, 576, 704, 832],
+)
+
+dataloader.grab_and_prefetch_chunk(1)
+dataloader.prepare_training_dataframe()
+dataloader.create_training_dataframe()
+print()
