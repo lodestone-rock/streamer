@@ -775,19 +775,25 @@ def generate_batch_concurrent(
 
         # load image from zip then put it in image processor
         image = process_image_fn(image_path=image_path, rescale_size=width_height)
-        return image
+        return x, image
 
     # concurrent image proces since cv2 and numpy process are not GIL bound 
+
+    # TODO: need to check if this actually return an ordered value
     with Pool(batch_size) as pool:
         batch_image = pool.starmap(
             _process_image_parallel,
             [(dataframe, x, image_name_col, width_col, height_col, process_image_fn) for x in range(batch_size)]
         )
 
-        # stack image into neat array
-        batch_image = np.stack(batch_image)
-        # as contiguous array
-        batch_image = np.ascontiguousarray(batch_image)
+    # just precaution to ensure order since im not trusting dummy pool to return my list ordered
+    batch_image = sorted(batch_image, key=lambda x: x[0])
+    batch_image = [np_image[1] for np_image in batch_image]
+
+    # stack image into neat array
+    batch_image = np.stack(batch_image)
+    # as contiguous array
+    batch_image = np.ascontiguousarray(batch_image)
 
     # ###[process token]### #
     batch_prompt = dataframe.loc[:, caption_col].tolist()
