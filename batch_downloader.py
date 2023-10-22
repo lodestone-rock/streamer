@@ -14,6 +14,14 @@ from threading import Thread
 import time
 from multiprocessing import Pool, Process
 
+#TODO: move all helper function into separate module!
+
+def split_list(input_list, chunk_size):
+    sublists = []
+    for i in range(0, len(input_list), chunk_size):
+        sublist = input_list[i:i + chunk_size]
+        sublists.append(sublist)
+    return sublists
 
 def concatenate_csv_files(file_paths: List[str]) -> pd.DataFrame:
     try:
