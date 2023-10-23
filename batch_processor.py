@@ -437,7 +437,6 @@ def generate_batch(
     tokenize_text_fn: Callable[[str, str, int], dict],
     tokenizer: CLIPTokenizer,
     dataframe: pd.DataFrame,
-    folder_path: str,
     image_name_col: str,
     caption_col: str,
     caption_token_length: int,
@@ -490,11 +489,10 @@ def generate_batch(
     # process batch sequentialy
     for x in range(batch_size):
         # get image name and size from datadrame
-        image_name = dataframe.iloc[x][image_name_col]
+        image_path = dataframe.iloc[x][image_name_col]
         width_height = [dataframe.iloc[x][width_col], dataframe.iloc[x][height_col]]
 
         # grab iamge from path and then process it
-        image_path = pathlib.Path(folder_path, image_name)
         image = process_image_fn(image_path=image_path, rescale_size=width_height)
 
         batch_image.append(image)

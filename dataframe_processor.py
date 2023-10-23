@@ -312,7 +312,7 @@ def amplify_resolution_bucket(
     return pd.concat(store_multiple_aspect_ratio)
 
 
-def create_tag_based_training_dataframe(
+def create_amplified_training_dataframe(
     dataframe: pd.DataFrame,
     image_width_col_name: str,
     image_height_col_name: str,
@@ -387,13 +387,6 @@ def create_tag_based_training_dataframe(
         seed=seed,
         bucket_batch_size=bucket_batch_size,
         repeat_batch=repeat_batch,
-    )
-
-    # suffle caption
-    # this assumes that the caption is tag based separated by comma
-    # ie: this, is, tag, based, caption
-    training_df[caption_col] = training_df[caption_col].apply(
-        lambda x: shuffle(x, seed)
     )
 
     return training_df, first_batch, bulk_batch
