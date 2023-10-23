@@ -3,3 +3,4 @@ hf_transfer
 Pillow
 pandas
 transformers
+opencv-python

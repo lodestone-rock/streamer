@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import random
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 
 def discrete_scale_to_equal_area(
@@ -153,7 +153,7 @@ def resolution_bucketing_batch_with_chunking(
     seed: int = 0,
     bucket_batch_size: int = 8,
     repeat_batch: int = 20,
-) -> pd.DataFrame:
+) -> Tuple[pd.DataFrame, int, int]:
     r"""
     create aspect ratio bucket and batch it but with additional chunk
     so swap overhead of jax compiled function is minimized
@@ -192,6 +192,9 @@ def resolution_bucketing_batch_with_chunking(
 
     for bucket, data in bucket_group:
         # generate first batch
+        # this prevents error when there's not enough data to fill the bucket
+        if len(data) < bucket_batch_size:
+            continue
         first_sample = data.sample(bucket_batch_size, replace=False, random_state=seed)
         first_batch.append(first_sample)
 
@@ -228,7 +231,11 @@ def resolution_bucketing_batch_with_chunking(
 
     new_dataframe = pd.concat(first_batch + remainder_batch, ignore_index=True)
 
-    return new_dataframe
+    # count batch, might be useful later on
+    len_first_batch = sum([len(x) for x in first_batch]) / bucket_batch_size
+    remainder_batch = sum([len(x) for x in remainder_batch]) / bucket_batch_size
+
+    return new_dataframe, len_first_batch, remainder_batch
 
 
 def shuffle(tags, seed):
@@ -305,7 +312,7 @@ def amplify_resolution_bucket(
     return pd.concat(store_multiple_aspect_ratio)
 
 
-def create_tag_based_training_dataframe(
+def create_amplified_training_dataframe(
     dataframe: pd.DataFrame,
     image_width_col_name: str,
     image_height_col_name: str,
@@ -325,7 +332,7 @@ def create_tag_based_training_dataframe(
     _return_with_helper_columns: Optional[bool] = False,
     _new_image_width_col_name: Optional[str] = "new_image_width",
     _new_image_height_col_name: Optional[str] = "new_image_height",
-) -> pd.DataFrame:
+) -> Tuple[pd.DataFrame, str, str]:
     """
     this function create presuffled training dataframe and also shuffle tags
     this function assumes that `caption_col` is a tag separated by comma
@@ -373,7 +380,7 @@ def create_tag_based_training_dataframe(
     )
 
     # chunk the bucket so jax is not switching the compiled cache back and forth
-    training_df = resolution_bucketing_batch_with_chunking(
+    training_df, first_batch, bulk_batch = resolution_bucketing_batch_with_chunking(
         dataframe=training_df,
         image_width_col_name=_new_image_width_col_name,
         image_height_col_name=_new_image_height_col_name,
@@ -382,11 +389,4 @@ def create_tag_based_training_dataframe(
         repeat_batch=repeat_batch,
     )
 
-    # suffle caption
-    # this assumes that the caption is tag based separated by comma
-    # ie: this, is, tag, based, caption
-    training_df[caption_col] = training_df[caption_col].apply(
-        lambda x: shuffle(x, seed)
-    )
-
-    return training_df
+    return training_df, first_batch, bulk_batch
