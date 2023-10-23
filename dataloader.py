@@ -4,56 +4,63 @@ from threading import Thread
 from queue import Queue, Empty
 import pandas as pd
 from typing import Optional, List
-import gc
 from multiprocessing.dummy import Pool
 import time
 import concurrent.futures
 
-from batch_downloader import (
+
+from utils import (
     read_json_file,
-    write_urls_to_file,
-    regex_search_list,
-    concatenate_csv_files,
+    save_dict_to_json,
     create_abs_path,
+    regex_search_list,
+    flatten_list,
     list_files_in_directory,
+    create_batches_from_list,
     delete_file_or_folder,
-    prefetch_data,
-    prefetch_data_with_validation,
     split_list,
 )
 
+
+from batch_downloader import (
+    write_urls_to_file,
+    concatenate_csv_files,
+    prefetch_data_with_validation,
+)
+
 from dataframe_processor import (
-    create_amplified_training_dataframe, 
+    create_amplified_training_dataframe,
     shuffle,
 )
 
 from batch_processor import (
     process_image,
     tokenize_text,
-    numpy_to_pil_and_save,
     cv2_process_image,
     generate_batch,
 )
 
-from transformers import CLIPTokenizer
-
-
-class TimingContextManager:
-    def __init__(self, message: str = ""):
-        self.message = message
-
-    def __enter__(self):
-        self.start_time = time.time()
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        end_time = time.time()
-        execution_time = end_time - self.start_time
-        print(f"{self.message} took {execution_time} seconds to execute.")
-
 
 # TODO: should i put stuff in class or i can write a neat function instead
 class DataLoader:
+    """
+    Args:
+        tokenizer_obj: Tokenizer object for caption tokenization.
+        config (str): Path to a JSON configuration file containing dataset information.
+        ramdisk_path (str): Path to store the dataset chunk, typically in a RAM disk.
+        chunk_number (int): The current chunk number for data loading.
+        seed (int, optional): Random number generator seed. Default is 432.
+        training_batch_size (int, optional): Size of the training batch to load to the device. Default is 2.
+        maximum_resolution_areas (List[int], optional): List of maximum image resolution areas. Default includes standard resolutions.
+        bucket_lower_bound_resolutions (List[int], optional): List of minimum axis pixel counts for images.
+        repeat_batch (int, optional): Number of times to repeat a batch during randomization. Default is 10.
+        extreme_aspect_ratio_clip (float, optional): Maximum aspect ratio allowed for images. Default is 2.0.
+        max_queue_size (int, optional): Maximum size of the data loading queue. Default is 100.
+        context_concatenation_multiplier (int, optional): Multiplier for extending the context length. Default is 3.
+        numb_of_worker_thread (int, optional): Number of worker threads for data loading. Default is 10.
+        queue_get_timeout (int, optional): Timeout for waiting in the data loading queue. Default is 60.
+    """
+
     def __init__(
         self,
         tokenizer_obj,
@@ -71,7 +78,7 @@ class DataLoader:
         ],
         bucket_lower_bound_resolutions: List[int] = [384, 512, 576, 704, 832],
         repeat_batch: int = 10,
-        extreme_aspect_ratio_clip: float = 2.0,
+        extreme_aspect_ratio_clip: float = 2.5,
         max_queue_size=100,
         context_concatenation_multiplier: int = 3,
         numb_of_worker_thread: int = 10,
@@ -311,8 +318,6 @@ class DataLoader:
             print(f"skipping batch {batch_number} because of this error: {e}")
             return None
 
-        # gc.collect()
-
     def dispatch_worker(self):
         """
         this method will spawn multiple threads to create batch and put the result in internal queue (_queue)
@@ -368,59 +373,3 @@ class DataLoader:
             batch = "end_of_batch"
 
         return batch
-
-
-# debug test stuff 
-tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
-
-dataloader = DataLoader(
-    tokenizer_obj=tokenizer,
-    config="repo2.json",  # Replace Any with the actual type of creds_data
-    ramdisk_path="ramdisk",
-    chunk_number=0,  # This should be incremented for each successful data loading
-    seed=42,  # This should be incremented when all batches are processed
-    training_batch_size=8,
-    repeat_batch=5,
-    maximum_resolution_areas=[
-        576**2,
-        704**2,
-        832**2,
-        960**2,
-        1088**2,
-    ],
-    bucket_lower_bound_resolutions=[384, 512, 576, 704, 832],
-    numb_of_worker_thread=20,
-    queue_get_timeout=10,
-)
-
-dataloader._print_debug = False
-dataloader.grab_and_prefetch_chunk(
-    1
-)  # TODO: chunk number should be defined here so the thread is not terminated i think?
-dataloader.prepare_training_dataframe()
-dataloader.create_training_dataframe()
-dataloader._bulk_batch_count = 100  # debug limit to 100 batch
-dataloader.dispatch_worker()
-with TimingContextManager("total queue"):
-    for count in range(int(dataloader.total_batch)):
-        with TimingContextManager(f"queue latency at batch {count}"):
-            test = dataloader.grab_next_batch()
-            if test == "end_of_batch":
-                break
-            try:
-                text = []
-                for x, token in enumerate(test["input_ids"]):
-                    text.append(str(x) + " === " + tokenizer.decode(token.reshape(-1)).replace("<|endoftext|>","").replace("<|startoftext|>", ""))
-                write_urls_to_file(text, f"{count}.txt")
-
-                for x, np_image in enumerate(test["pixel_values"]):
-                    numpy_to_pil_and_save(np_image, f"{count}-{x}-pil.png")
-
-                # print(count, "shape", test["pixel_values"].shape)
-                # # print("shape", test["input_ids"].shape)
-            except:
-                print(f"batch {count} is none")
-            if count % int(dataloader.total_batch):
-                gc.collect()
-            time.sleep(0.01)
-print()

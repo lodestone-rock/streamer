@@ -10,20 +10,8 @@ import time
 import os
 
 from multiprocessing.dummy import Pool
+
 # from batch_downloader import process_image_in_zip # TODO: move this to utils.py so its tidy
-
-class TimingContextManager:
-    def __init__(self, message:str=""):
-        self.message = message
-
-    def __enter__(self):
-        self.start_time = time.time()
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        end_time = time.time()
-        execution_time = end_time - self.start_time
-        print(f"{self.message} took {execution_time} seconds to execute.")
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -149,9 +137,8 @@ def process_image_in_zip(
         with archive.open(image_name) as filename:
             # stop=time.time()
             # print(stop-start)
-            
-            with Image.open(filename) as image:
 
+            with Image.open(filename) as image:
                 # with TimingContextManager("converting image to RGB"):
                 #     image = image.convert("RGB")
                 image = image.convert("RGB")
@@ -222,34 +209,18 @@ def process_image_in_zip(
                     return np_image
 
 
-def numpy_to_pil_and_save(np_image, output_path):
-    # Convert from channel-height-width back to height-width-channel
-    np_image = np.transpose(np_image, (1, 2, 0))
-    
-    # Denormalize
-    np_image = (np_image + 1) * 127.5
-    
-    # Convert the NumPy array to a PIL image
-    pil_image = Image.fromarray(np_image.astype('uint8'))
-
-    # Save the PIL image to the specified output path
-    pil_image.save(output_path)
-    
-
 def crop_resize_image(image: np.ndarray, size: tuple):
     # Note: Height and width are wrong here.  But they are consistently wrong.
     # The code works. Don't touch it until and unless prepared to do a FULL refactor.
     # initial_shape = image.shape
 
-
-
-    width, height, _ = image.shape # 1801, 1200
-    target_width, target_height = size # 640, 384
-    assert (target_width > target_height and width > height) or \
-           (target_width < target_height and width < height) or \
-           (target_width == target_height), \
-           f"An image got sent to an inappropriate bucket.  The bucket size is {size}. The image shape is {image.shape}."
-
+    width, height, _ = image.shape  # 1801, 1200
+    target_width, target_height = size  # 640, 384
+    assert (
+        (target_width > target_height and width > height)
+        or (target_width < target_height and width < height)
+        or (target_width == target_height)
+    ), f"An image got sent to an inappropriate bucket.  The bucket size is {size}. The image shape is {image.shape}."
 
     width_scale = width / target_width
     height_scale = height / target_height
@@ -262,15 +233,15 @@ def crop_resize_image(image: np.ndarray, size: tuple):
         interpolation = cv2.INTER_AREA
 
     # Calculate the aspect ratio of the target size
-    target_aspect_ratio = target_width / target_height # 640 / 384 = 1.6667
+    target_aspect_ratio = target_width / target_height  # 640 / 384 = 1.6667
 
     # Calculate the aspect ratio of the input image
-    image_aspect_ratio = width / height # 1801 / 1200 = 1.500008
+    image_aspect_ratio = width / height  # 1801 / 1200 = 1.500008
 
     if target_aspect_ratio > image_aspect_ratio:
         # Crop the image vertically to match the target aspect ratio (reduce height)
-        new_height = int(width / target_aspect_ratio) # 1801 / 1.66667 = 1081 (correct)
-        top = (height - new_height) // 2 
+        new_height = int(width / target_aspect_ratio)  # 1801 / 1.66667 = 1081 (correct)
+        top = (height - new_height) // 2
         bottom = top + new_height
         image = image[:, top:bottom, :]
     elif target_aspect_ratio < image_aspect_ratio:
@@ -283,7 +254,9 @@ def crop_resize_image(image: np.ndarray, size: tuple):
     # Center crop and resize the image using cv2.resize
     # Don't forget that cv2.resize uses a flipped size for absolutely no good reason!
     # with TimingContextManager("lanczos rescale"):
-    image = cv2.resize(image, dsize=(target_height, target_width), interpolation=interpolation)
+    image = cv2.resize(
+        image, dsize=(target_height, target_width), interpolation=interpolation
+    )
     # if not os.path.exists("./test_image3.png"):
     #     cv2.imwrite("./test_image3.png", cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
     image = image.transpose(2, 0, 1)
@@ -322,7 +295,7 @@ def cv2_process_image_in_zip(
         with archive.open(image_name) as file_bytes:
             with TimingContextManager("read from zip and converting image to RGB"):
                 np_image = np.frombuffer(file_bytes.read(), np.uint8)
-                
+
                 image = cv2.imdecode(np_image, cv2.IMREAD_COLOR)
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
@@ -574,24 +547,44 @@ def generate_batch_from_zip_files_concurrent(
     # ###[process image]### #
     # process batch concurently
 
-    def _process_image_parallel(dataframe, x, image_name_col, zip_path_col, width_col, height_col, process_image_fn):
+    def _process_image_parallel(
+        dataframe,
+        x,
+        image_name_col,
+        zip_path_col,
+        width_col,
+        height_col,
+        process_image_fn,
+    ):
         image_name = dataframe.iloc[x][image_name_col]
         zip_file_name = dataframe.iloc[x][zip_path_col]
         width_height = [dataframe.iloc[x][width_col], dataframe.iloc[x][height_col]]
 
         # load image from zip then put it in image processor
         image = process_image_fn(
-            zip_file_path=zip_file_name, image_name=image_name, rescale_size=width_height
+            zip_file_path=zip_file_name,
+            image_name=image_name,
+            rescale_size=width_height,
         )
 
         return image
-
 
     with TimingContextManager(message="image processing"):
         with Pool(batch_size) as pool:
             batch_image = pool.starmap(
                 _process_image_parallel,
-                [(dataframe, x, image_name_col, zip_path_col, width_col, height_col, process_image_fn) for x in range(batch_size)]
+                [
+                    (
+                        dataframe,
+                        x,
+                        image_name_col,
+                        zip_path_col,
+                        width_col,
+                        height_col,
+                        process_image_fn,
+                    )
+                    for x in range(batch_size)
+                ],
             )
 
         # for x in range(batch_size):
@@ -688,8 +681,10 @@ def generate_batch_from_zip_files(
         # load image from zip then put it in image processor
 
         image = process_image_fn(
-            zip_file_path=zip_file_name, image_name=image_name, rescale_size=width_height
-            )
+            zip_file_path=zip_file_name,
+            image_name=image_name,
+            rescale_size=width_height,
+        )
 
         batch_image.append(image)
     # stack image into neat array
@@ -711,6 +706,7 @@ def generate_batch_from_zip_files(
     output["attention_mask"] = tokenizer_dict.attention_mask
 
     return output
+
 
 def generate_batch_concurrent(
     process_image_fn: Callable[[str, tuple], np.array],
@@ -766,8 +762,9 @@ def generate_batch_concurrent(
     # ###[process image]### #
     # process batch concurently
 
-    def _process_image_parallel(dataframe, x, image_name_col, width_col, height_col, process_image_fn):
-
+    def _process_image_parallel(
+        dataframe, x, image_name_col, width_col, height_col, process_image_fn
+    ):
         image_path = dataframe.iloc[x][image_name_col]
         width_height = [dataframe.iloc[x][width_col], dataframe.iloc[x][height_col]]
 
@@ -775,13 +772,16 @@ def generate_batch_concurrent(
         image = process_image_fn(image_path=image_path, rescale_size=width_height)
         return x, image
 
-    # concurrent image proces since cv2 and numpy process are not GIL bound 
+    # concurrent image proces since cv2 and numpy process are not GIL bound
 
     # TODO: need to check if this actually return an ordered value
     with Pool(batch_size) as pool:
         batch_image = pool.starmap(
             _process_image_parallel,
-            [(dataframe, x, image_name_col, width_col, height_col, process_image_fn) for x in range(batch_size)]
+            [
+                (dataframe, x, image_name_col, width_col, height_col, process_image_fn)
+                for x in range(batch_size)
+            ],
         )
 
     # just precaution to ensure order since im not trusting dummy pool to return my list ordered

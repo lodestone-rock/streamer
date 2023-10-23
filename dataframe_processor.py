@@ -232,8 +232,8 @@ def resolution_bucketing_batch_with_chunking(
     new_dataframe = pd.concat(first_batch + remainder_batch, ignore_index=True)
 
     # count batch, might be useful later on
-    len_first_batch = sum([len(x) for x in first_batch])/bucket_batch_size
-    remainder_batch = sum([len(x) for x in remainder_batch])/bucket_batch_size
+    len_first_batch = sum([len(x) for x in first_batch]) / bucket_batch_size
+    remainder_batch = sum([len(x) for x in remainder_batch]) / bucket_batch_size
 
     return new_dataframe, len_first_batch, remainder_batch
 

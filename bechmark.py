@@ -7,6 +7,7 @@ import time
 import zipfile
 from PIL import Image
 
+
 def read_image_from_directory(image_path):
     with TimingContextManager("opening image directly"):
         try:
@@ -31,7 +32,7 @@ def read_image_from_zip(zip_file_path, image_filename):
     with TimingContextManager("opening image in zip"):
         try:
             # Open the zip file
-            with zipfile.ZipFile(zip_file_path, 'r') as zip_file:
+            with zipfile.ZipFile(zip_file_path, "r") as zip_file:
                 # Read the image from the zip file
                 with zip_file.open(image_filename) as image_file:
                     # Read the image as binary data
@@ -45,7 +46,9 @@ def read_image_from_zip(zip_file_path, image_filename):
                     if image is not None:
                         return image
                     else:
-                        print(f"Failed to read the image {image_filename} from the zip file")
+                        print(
+                            f"Failed to read the image {image_filename} from the zip file"
+                        )
                         return None
 
         except Exception as e:
@@ -54,7 +57,7 @@ def read_image_from_zip(zip_file_path, image_filename):
 
 
 class TimingContextManager:
-    def __init__(self, message:str=""):
+    def __init__(self, message: str = ""):
         self.message = message
 
     def __enter__(self):
@@ -66,11 +69,13 @@ class TimingContextManager:
         execution_time = end_time - self.start_time
         print(f"{self.message} took {execution_time} seconds to execute.")
 
-if __name__ == '__main__':
 
+if __name__ == "__main__":
     # List of filenames to process
     directory_path = create_abs_path("ramdisk/16384-e6-0/zero")
-    zip_path = create_abs_path("ramdisk/16384-e6-0/16384-e6-d9d3cd92-fc95-42ff-bfa8-80879461a410.zip")
+    zip_path = create_abs_path(
+        "ramdisk/16384-e6-0/16384-e6-d9d3cd92-fc95-42ff-bfa8-80879461a410.zip"
+    )
     filenames = os.listdir(directory_path)[:1000]
 
     # Number of threads (adjust this according to your needs)
@@ -81,21 +86,24 @@ if __name__ == '__main__':
 
     # Use the thread pool to process the filenames
     with TimingContextManager("opening image directly overall took"):
-        image = pool.map(read_image_from_directory, [os.path.join(directory_path, filename) for filename in filenames])
+        image = pool.map(
+            read_image_from_directory,
+            [os.path.join(directory_path, filename) for filename in filenames],
+        )
 
         # Close the thread pool
         pool.close()
         pool.join()
-
 
     pool = Pool(200)
 
     with TimingContextManager("opening image in zip overall took"):
-        image = pool.starmap(read_image_from_zip, [(zip_path, filename) for filename in filenames])
+        image = pool.starmap(
+            read_image_from_zip, [(zip_path, filename) for filename in filenames]
+        )
 
         # Close the thread pool
         pool.close()
         pool.join()
-
 
     print()
