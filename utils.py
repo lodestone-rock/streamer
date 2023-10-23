@@ -3,6 +3,7 @@ import json
 import os
 import re
 import zipfile
+import shutil
 from PIL import Image
 import numpy as np
 from typing import (
@@ -134,8 +135,11 @@ def delete_file_or_folder(path):
             os.remove(path)
             print(f"{path} (file) deleted successfully")
         elif os.path.isdir(path):
-            os.rmdir(path)
-            print(f"{path} (folder) deleted successfully")
+            try:
+                shutil.rmtree(path)
+                print(f"{path} (folder) deleted successfully")
+            except OSError as e:
+                print(f"Error: {e}")
         else:
             print(f"{path} is neither a file nor a folder")
     else:

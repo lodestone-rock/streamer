@@ -33,12 +33,14 @@ dataloader = DataLoader(
 )
 
 dataloader._print_debug = False
+dataloader.delete_prev_chunks(prev_chunk=1)
 dataloader.grab_and_prefetch_chunk(
-    1
+    numb_of_prefetched_batch=1,
+    chunk_number=2,
 )  # TODO: chunk number should be defined here so the thread is not terminated i think?
 dataloader.prepare_training_dataframe()
 dataloader.create_training_dataframe()
-dataloader._bulk_batch_count = 100  # debug limit to 100 batch
+dataloader._bulk_batch_count = 400  # debug limit to 100 batch
 dataloader.dispatch_worker()
 with TimingContextManager("total queue"):
     for count in range(int(dataloader.total_batch)):
@@ -47,19 +49,19 @@ with TimingContextManager("total queue"):
             if test == "end_of_batch":
                 break
             # try:
-            text = []
-            for x, token in enumerate(test["input_ids"]):
-                text.append(
-                    str(x)
-                    + " === "
-                    + tokenizer.decode(token.reshape(-1))
-                    .replace("<|endoftext|>", "")
-                    .replace("<|startoftext|>", "")
-                )
-            write_list_to_file(text, f"{count}.txt")
+                # text = []
+                # for x, token in enumerate(test["input_ids"]):
+                #     text.append(
+                #         str(x)
+                #         + " === "
+                #         + tokenizer.decode(token.reshape(-1))
+                #         .replace("<|endoftext|>", "")
+                #         .replace("<|startoftext|>", "")
+                #     )
+                # write_list_to_file(text, f"{count}.txt")
 
-            for x, np_image in enumerate(test["pixel_values"]):
-                numpy_to_pil_and_save(np_image, f"{count}-{x}-pil.png")
+                # for x, np_image in enumerate(test["pixel_values"]):
+                #     numpy_to_pil_and_save(np_image, f"{count}-{x}-pil.png")
 
             # print(count, "shape", test["pixel_values"].shape)
             # # print("shape", test["input_ids"].shape)

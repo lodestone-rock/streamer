@@ -5,3 +5,4 @@ repo.json
 *.log
 __pycache__/
 *.png
+output_test/
