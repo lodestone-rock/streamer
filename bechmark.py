@@ -2,7 +2,7 @@ import os
 from multiprocessing.dummy import Pool
 import cv2
 import numpy as np
-from batch_downloader import list_files_in_zip, create_abs_path
+from batch_downloader import list_files_in_zip
 import time
 import zipfile
 from PIL import Image
@@ -72,10 +72,8 @@ class TimingContextManager:
 
 if __name__ == "__main__":
     # List of filenames to process
-    directory_path = create_abs_path("ramdisk/16384-e6-0/zero")
-    zip_path = create_abs_path(
-        "ramdisk/16384-e6-0/16384-e6-d9d3cd92-fc95-42ff-bfa8-80879461a410.zip"
-    )
+    directory_path = "ramdisk/16384-e6-0/zero"
+    zip_path = "ramdisk/16384-e6-0/16384-e6-d9d3cd92-fc95-42ff-bfa8-80879461a410.zip"
     filenames = os.listdir(directory_path)[:1000]
 
     # Number of threads (adjust this according to your needs)

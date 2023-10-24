@@ -13,7 +13,6 @@ import time
 from multiprocessing import Pool, Process
 from utils import (
     save_dict_to_json,
-    create_abs_path,
     regex_search_list,
     flatten_list,
     list_files_in_directory,
@@ -346,7 +345,7 @@ def download_chunks_of_dataset(
         _temp_file_name (Optional[str]): Temporary file name for storing download URLs (default: "aria_download_url_temp.txt").
     """
     # convert to absolute path
-    ramdisk_path = create_abs_path(storage_path)
+    ramdisk_path = storage_path
 
     data = get_sample_from_repo(
         repo_name=repo_name,
@@ -596,7 +595,7 @@ def download_chunks_of_dataset_with_validation(
         _disable_validation (Optional[bool]): disable validation mode entirely.
     """
     # convert to absolute path
-    ramdisk_path = create_abs_path(storage_path)
+    ramdisk_path = storage_path
     download_dir = os.path.join(ramdisk_path, f"{batch_name}{batch_number}")
     urls_file = os.path.join(ramdisk_path, _temp_file_name)
     manifest_file = os.path.join(download_dir, "manifest.json")

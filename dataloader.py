@@ -12,7 +12,6 @@ import concurrent.futures
 from utils import (
     read_json_file,
     save_dict_to_json,
-    create_abs_path,
     regex_search_list,
     flatten_list,
     list_files_in_directory,
@@ -127,7 +126,7 @@ class DataLoader:
         #     },
         #     "token": "hf_token"
         # }
-        self.config = read_json_file(create_abs_path(config))
+        self.config = read_json_file(config)
 
         # this defines how long it need to wait before declaring it's the end of batch
         # just in case dataloader is stalling
@@ -203,7 +202,7 @@ class DataLoader:
         repo_details = self.config["repo"]
         for repo in repo_details.keys():
             chunk_path = os.path.join(
-                create_abs_path(self.ramdisk_path),
+                self.ramdisk_path,
                 f"{repo_details[repo]['prefix']}{self.chunk_number}",
             )
             file_list = list_files_in_directory(chunk_path)
@@ -385,7 +384,7 @@ class DataLoader:
             repo_details = self.config["repo"]
             for repo in repo_details.keys():
                 chunk_path = os.path.join(
-                    create_abs_path(self.ramdisk_path),
+                    self.ramdisk_path,
                     f"{repo_details[repo]['prefix']}{prev_chunk}",
                 )
                 aria_txt = chunk_path + ".txt"
