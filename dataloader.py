@@ -9,7 +9,7 @@ import time
 import concurrent.futures
 
 
-from utils import (
+from .utils import (
     read_json_file,
     save_dict_to_json,
     regex_search_list,
@@ -21,18 +21,18 @@ from utils import (
 )
 
 
-from batch_downloader import (
+from .batch_downloader import (
     write_urls_to_file,
     concatenate_csv_files,
     prefetch_data_with_validation,
 )
 
-from dataframe_processor import (
+from .dataframe_processor import (
     create_amplified_training_dataframe,
     shuffle,
 )
 
-from batch_processor import (
+from .batch_processor import (
     process_image,
     tokenize_text,
     cv2_process_image,

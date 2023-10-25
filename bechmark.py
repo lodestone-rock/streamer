@@ -2,7 +2,7 @@ import os
 from multiprocessing.dummy import Pool
 import cv2
 import numpy as np
-from batch_downloader import list_files_in_zip
+from .batch_downloader import list_files_in_zip
 import time
 import zipfile
 from PIL import Image

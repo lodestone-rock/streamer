@@ -11,7 +11,7 @@ from PIL import Image
 from threading import Thread
 import time
 from multiprocessing import Pool, Process
-from utils import (
+from .utils import (
     save_dict_to_json,
     regex_search_list,
     flatten_list,
