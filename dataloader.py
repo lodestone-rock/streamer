@@ -163,7 +163,9 @@ class DataLoader:
         # not overridable for now / do not override it !
         self.numb_of_worker_thread = numb_of_worker_thread
 
-    def grab_and_prefetch_chunk(self, numb_of_prefetched_batch: int = 1, chunk_number: int = None) -> None:
+    def grab_and_prefetch_chunk(
+        self, numb_of_prefetched_batch: int = 1, chunk_number: int = None
+    ) -> None:
         """
         this will try to grab a chunk of dataset while also prefetch extra chunk for the next round
         this will download batch of zip files and in one chunk can have multiple zip files and csv
@@ -172,13 +174,24 @@ class DataLoader:
         numb_of_prefetched_batch (`int`) (default:`1`): how many prefetched chunk is downloaded conccurently.
         chunk_number (`int`) (default:`None`): grab this chunk number (make sure it's valid chunk! there's no check if it's invalid).
         """
-        if chunk_number: #override if exist
+        if chunk_number:  # override if exist
             self.chunk_number = chunk_number
+
         repo_details = self.config["repo"]
+
         for repo in repo_details.keys():
+            csv_path = (
+                repo_details[repo]["csv_path"]
+                if "csv_path" in repo_details[repo]
+                else None
+            )
+            repo_name = (
+                repo_details[repo]["name"] if "name" in repo_details[repo] else None
+            )
             prefetch_data_with_validation(
                 ramdisk_path=self.ramdisk_path,
-                repo_name=repo_details[repo]["name"],
+                repo_name=repo_name,
+                csv_path=csv_path,
                 token=self.config["token"],
                 repo_path=repo_details[repo]["folder_path_in_repo"],
                 batch_number=self.chunk_number,  # chunk at
@@ -374,7 +387,6 @@ class DataLoader:
             batch = "end_of_batch"
 
         return batch
-
 
     def delete_prev_chunks(self, prev_chunk: int):
         """

@@ -278,6 +278,59 @@ def get_sample_from_repo(
     return url_batches, file_name_batches
 
 
+def reads_url_from_file(
+    file_path: str,
+    batch_size: int,
+    seed: Optional[int] = 42,
+    offset: Optional[int] = 0,
+) -> Tuple[List[str]]:
+    """
+    read csv files filled chunk with url and then sample it
+    csv must have this column ["zip_file_url", "csv_url", "zip_filename", "csv_filename"]
+    the *_filename column can be custom but must have similar prefix file name ie:
+    [custom_dataset_rev_1_{hash}.zip, custom_dataset_rev_1_{hash}.csv]
+    """
+
+    # Step 1: load the csv
+    url_and_file_name = pd.read_csv(file_path)
+
+    # check if the column name is the same
+    expected_columns = ["zip_file_url", "csv_url", "zip_filename", "csv_filename"]
+    assertion_message = (
+        "column name is not matched, check your CSV and make sure these column are included"
+        "`zip_file_url` `csv_url` `zip_filename` `csv_filename`"
+    )
+    assert set(expected_columns).issubset(url_and_file_name.columns), assertion_message
+
+    # step 2: shuffle order
+    url_and_file_name = url_and_file_name.sample(frac=1, random_state=seed).reset_index(
+        drop=True
+    )
+
+    # store batch here
+    url_series = []
+
+    counter = 0
+    while counter != batch_size:
+        # cycle around the download url
+        modulo_batches = (counter + offset) % len(url_and_file_name)
+        counter += 1
+        # store series of dataframe that contain urls that need to be downloaded
+        url_series.append(url_and_file_name.iloc[modulo_batches])
+
+    # convert back to dataframe
+    url_series = pd.concat(url_series, axis=1).T
+
+    aria_format = []
+
+    for index, row in url_series.iterrows():
+        # csv
+        aria_format.append(f'{row["zip_file_url"]}\n\tout={row["zip_filename"]}\n')
+        # zip
+        aria_format.append(f'{row["csv_url"]}\n\tout={row["csv_filename"]}\n')
+    return aria_format
+
+
 def check_error(filename: str) -> list:
     list_broken_image = []
     try:
@@ -554,12 +607,13 @@ def unpack_zip_files(absolute_batch_path: str, absolute_target_dir: str) -> None
 
 
 def download_chunks_of_dataset_with_validation(
-    repo_name: str,
     batch_size: int,
     offset: int,
     storage_path: str,
     batch_number: str,
     prefix: str,
+    csv_path: str = None,
+    repo_name: str = None,
     numb_of_validator_threads: Optional[int] = 80 * 32,
     batch_name: Optional[str] = "batch_",
     token: Optional[str] = None,
@@ -577,6 +631,7 @@ def download_chunks_of_dataset_with_validation(
 
     Args:
         repo_name (str): The name of the repository to download data from.
+        csv_path (str): csv containing url for zip and csv file, csv must have this column ["zip_file_url", "csv_url", "zip_filename", "csv_filename"].
         batch_size (int): The number of items to download in each batch.
         offset (int): The starting index of the dataset to download.
         storage_path (str): The directory where downloaded data will be stored.
@@ -600,21 +655,46 @@ def download_chunks_of_dataset_with_validation(
     urls_file = os.path.join(ramdisk_path, _temp_file_name)
     manifest_file = os.path.join(download_dir, "manifest.json")
 
-    data = get_sample_from_repo(
-        repo_name=repo_name,
-        token=token,
-        repo_path=repo_path,
-        seed=seed,
-        batch_size=batch_size,
-        offset=offset,
-    )
+    # TODO: remove this hard coded infinite retry
+    if csv_path and repo_name:
+        raise "cannot use both file_path and repo_name at the same time"
 
-    # grab the urls and extract file name from urls
-    file_urls = flatten_list(data[0])
-    # create a list of url strings and args that supported by aria2
-    aria_format = [
-        f"{file_name}\n\tout={file_name.split('/')[-1]}\n" for file_name in file_urls
-    ]
+    if repo_name:
+        while True:
+            try:
+                data = get_sample_from_repo(
+                    repo_name=repo_name,
+                    token=token,
+                    repo_path=repo_path,
+                    seed=seed,
+                    batch_size=batch_size,
+                    offset=offset,
+                )
+            except Exception as e:
+                time.sleep(10)
+                print(e)
+                print(
+                    "WARNING! THIS WILL RETRY FILE URL FOREVER! PLEASE CHECK YOUR REPO!"
+                )
+                continue
+            break
+
+        # grab the urls and extract file name from urls
+        file_urls = flatten_list(data[0])
+        # create a list of url strings and args that supported by aria2
+        aria_format = [
+            f"{file_name}\n\tout={file_name.split('/')[-1]}\n"
+            for file_name in file_urls
+        ]
+
+    if csv_path:
+        aria_format = reads_url_from_file(
+            file_path=csv_path,
+            batch_size=batch_size,
+            seed=seed,
+            offset=offset,
+        )
+
     # put the urls into a temporary txt file so aria can download it
     write_urls_to_file(aria_format, urls_file)
 
@@ -661,11 +741,12 @@ def download_chunks_of_dataset_with_validation(
 
 def prefetch_data_with_validation(
     ramdisk_path: str,
-    repo_name: str,
     token: str,
     repo_path: str,
     batch_number: int,
     prefix: str,
+    csv_path: str = None,
+    repo_name: str = None,
     numb_of_validator_threads: Optional[int] = 80 * 32,
     batch_size: int = 2,
     numb_of_prefetched_batch: int = 1,
@@ -681,6 +762,7 @@ def prefetch_data_with_validation(
     Args:
         ramdisk_path (str): The path to the local storage (RAM disk) where data will be stored.
         repo_name (str): The name of the remote repository.
+        csv_path (str): csv containing url for zip and csv file, csv must have this column ["zip_file_url", "csv_url", "zip_filename", "csv_filename"].
         token (str): The authentication token for accessing the remote repository.
         repo_path (str): The path within the remote repository where data is located.
         batch_number (int): The batch number to process.
@@ -705,6 +787,7 @@ def prefetch_data_with_validation(
             target=download_chunks_of_dataset_with_validation,
             kwargs={
                 "repo_name": repo_name,
+                "csv_path": csv_path,
                 "batch_size": batch_size,
                 "offset": batch_size * (batch_number + 1 + thread_count),
                 "token": token,
@@ -731,6 +814,7 @@ def prefetch_data_with_validation(
     # This shouldn't run if the prefetchers succeed in downloading the entire thing and skip to the next line
     download_chunks_of_dataset_with_validation(
         repo_name=repo_name,
+        csv_path=csv_path,
         batch_size=batch_size,
         offset=batch_size * batch_number,
         token=token,
