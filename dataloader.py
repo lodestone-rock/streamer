@@ -7,6 +7,7 @@ from typing import Optional, List
 from multiprocessing.dummy import Pool
 import time
 import concurrent.futures
+import numpy as np
 
 
 from .utils import (
@@ -30,6 +31,7 @@ from .batch_downloader import (
 from .dataframe_processor import (
     create_amplified_training_dataframe,
     shuffle,
+    partial_select,
 )
 
 from .batch_processor import (
@@ -258,6 +260,27 @@ class DataLoader:
                 df_caption[self._caption_col] = df_caption[self._caption_col].apply(
                     lambda x: shuffle(x, self.seed)
                 )
+
+
+            # partially drop the caption to increase model ambigunity that will create blurry distribution instead
+            if repo_details[repo]["max_tag_count"]:
+                df_caption[self._caption_col] = df_caption[self._caption_col].apply(
+                    lambda x: partial_select(x, repo_details[repo]["max_tag_count"])
+                )
+
+
+            # drop the entire caption to make unconditional guidance
+            if repo_details[repo]["drop_caption_ratio"]:
+
+                # Determine the number of cells to set to blank
+                num_cells_to_blank = int(repo_details[repo]["drop_caption_ratio"] * len(df_caption[self._caption_col]))
+
+                # Generate random indices to set cells to blank
+                random_indices = np.random.choice(df_caption[self._caption_col].index, size=num_cells_to_blank, replace=True)
+
+                # Set the selected cells to blank
+                df_caption[self._caption_col][random_indices] = ""
+
 
             dfs.append(df_caption)
         dfs = pd.concat(dfs, axis=0)

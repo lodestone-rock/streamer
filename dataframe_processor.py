@@ -245,6 +245,13 @@ def shuffle(tags, seed):
     return tags
 
 
+def partial_select(tags, count_of_tags):
+    tags = tags.split(",")
+    tags = tags[: count_of_tags]
+    tags = ",".join(tags)
+    return tags
+
+
 def amplify_resolution_bucket(
     dataframe: pd.DataFrame,
     image_width_col_name: str,
