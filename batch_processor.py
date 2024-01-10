@@ -489,6 +489,97 @@ def generate_batch(
 
     return output
 
+def generate_sdxl_batch(
+    process_image_fn: Callable[[str, tuple], np.array],
+    tokenize_text_fn: Callable[[str, str, int], dict],
+    tokenizer: CLIPTokenizer,
+    tokenizer_2: CLIPTokenizer,
+    dataframe: pd.DataFrame,
+    image_name_col: str,
+    caption_col: str,
+    caption_token_length: int,
+    width_col: str,
+    height_col: str,
+    batch_slice: int = 1,
+) -> dict:
+    """
+    generate a single batch for training.
+    use this function in a for loop while swapping the dataframe batch
+    depends on process_image and tokenize_text function
+
+    args:
+        process_image_fn (:obj:`Callable`):
+            process_image function
+        process_image_fn (:obj:`Callable`):
+            tokenize_text function
+        tokenizer (:obj:`CLIPTokenizer`):
+            tokenizer class
+        dataframe (:obj:`pd.DataFrame`):
+            input dataframe
+        folder_path (:obj:`str`):
+            path to image folder
+        image_name_col (:obj:`str`):
+            column name inside dataframe filled with image names
+        caption_col (:obj:`str`):
+            column name inside dataframe filled with text captions
+        caption_token_length (:obj:`int`):
+            maximum token before clipping
+        width_col (:obj:`str`):
+            column name inside dataframe filled with bucket width of an image
+        height_col (:obj:`str`):
+            column name inside dataframe filled with bucket height of an image
+        batch_slice (:obj:`int`, *optional*, defaults to 1):
+            if greater than 1 it will slice the token into batch evenly
+            (caption_token_length-2) must be divisible by this value
+    return:
+        dict:
+            {
+                "attention_mask": np.array,
+                "input_ids": np.array,
+                "pixel_values": np.array
+            }
+    """
+    # count batch size
+    batch_size = len(dataframe)
+    batch_image = []
+
+    # ###[process image]### #
+    # process batch sequentialy
+    for x in range(batch_size):
+        # get image name and size from datadrame
+        image_path = dataframe.iloc[x][image_name_col]
+        width_height = [dataframe.iloc[x][width_col], dataframe.iloc[x][height_col]]
+
+        # grab iamge from path and then process it
+        image = process_image_fn(image_path=image_path, rescale_size=width_height)
+
+        batch_image.append(image)
+    # stack image into neat array
+    batch_image = np.stack(batch_image)
+    # as contiguous array
+    batch_image = np.ascontiguousarray(batch_image)
+
+    # ###[process token]### #
+    batch_prompt = dataframe.loc[:, caption_col].tolist()
+    tokenizer_dict = tokenize_text_fn(
+        tokenizer=tokenizer,
+        text_prompt=batch_prompt,
+        max_length=caption_token_length,
+        batch_slice=batch_slice,
+    )
+    tokenizer_2_dict = tokenize_text_fn(
+        tokenizer=tokenizer_2,
+        text_prompt=batch_prompt,
+        max_length=caption_token_length,
+        batch_slice=batch_slice,
+    )
+    output = {}
+    output["pixel_values"] = batch_image
+    output["input_ids"] = tokenizer_dict.input_ids
+    output["input_ids_2"] = tokenizer_2_dict.input_ids
+    output["attention_mask"] = tokenizer_dict.attention_mask
+
+    return output
 
 def generate_batch_from_zip_files_concurrent(
     process_image_fn: Callable[[str, tuple], np.array],
