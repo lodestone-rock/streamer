@@ -39,6 +39,7 @@ from .batch_processor import (
     tokenize_text,
     cv2_process_image,
     generate_sdxl_batch,
+    generate_batch,
 )
 
 
@@ -230,6 +231,11 @@ class DataLoader:
 
             # combine csvs into 1 dataframe
             df_caption = concatenate_csv_files(csvs)
+
+            if repo_details[repo]["filename_uuid"] and repo_details[repo]["file_extension"]:
+                # concatenate file uuid and extension
+                repo_details[repo]["filename_col"] = repo_details[repo]["filename_uuid"] + "." + repo_details[repo]["file_extension"]
+
             # renaming column to ensure consitency
             df_caption = df_caption.rename(
                 columns={
@@ -620,6 +626,11 @@ class SDXLDataLoader:
 
             # combine csvs into 1 dataframe
             df_caption = concatenate_csv_files(csvs)
+
+            if repo_details[repo]["filename_uuid"] and repo_details[repo]["file_extension"]:
+                # concatenate file uuid and extension
+                repo_details[repo]["filename_col"] = repo_details[repo]["filename_uuid"] + "." + repo_details[repo]["file_extension"]
+
             # renaming column to ensure consitency
             df_caption = df_caption.rename(
                 columns={
