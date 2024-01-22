@@ -234,7 +234,7 @@ class DataLoader:
 
             if repo_details[repo]["filename_uuid"] and repo_details[repo]["file_extension"]:
                 # concatenate file uuid and extension
-                repo_details[repo]["filename_col"] = repo_details[repo]["filename_uuid"] + "." + repo_details[repo]["file_extension"]
+                df_caption[self._filename_col] = df_caption[repo_details[repo]["filename_uuid"]] + "." + df_caption[repo_details[repo]["file_extension"]]
 
             # renaming column to ensure consitency
             df_caption = df_caption.rename(
@@ -285,7 +285,7 @@ class DataLoader:
                 random_indices = np.random.choice(df_caption[self._caption_col].index, size=num_cells_to_blank, replace=True)
 
                 # Set the selected cells to blank
-                df_caption[self._caption_col][random_indices] = ""
+                df_caption.loc[random_indices, self._caption_col] = ""
 
 
             dfs.append(df_caption)
@@ -629,7 +629,7 @@ class SDXLDataLoader:
 
             if repo_details[repo]["filename_uuid"] and repo_details[repo]["file_extension"]:
                 # concatenate file uuid and extension
-                repo_details[repo]["filename_col"] = repo_details[repo]["filename_uuid"] + "." + repo_details[repo]["file_extension"]
+                df_caption[self._filename_col] = df_caption[repo_details[repo]["filename_uuid"]] + "." + df_caption[repo_details[repo]["file_extension"]]
 
             # renaming column to ensure consitency
             df_caption = df_caption.rename(
@@ -680,7 +680,7 @@ class SDXLDataLoader:
                 random_indices = np.random.choice(df_caption[self._caption_col].index, size=num_cells_to_blank, replace=True)
 
                 # Set the selected cells to blank
-                df_caption[self._caption_col][random_indices] = ""
+                df_caption.loc[random_indices, self._caption_col] = ""
 
 
             dfs.append(df_caption)
